@@ -1,0 +1,2 @@
+# No hardcoded theme — Streamlit's built-in dark/light/system switcher is preserved.
+# Users can switch theme via the ☰ menu → Settings.
