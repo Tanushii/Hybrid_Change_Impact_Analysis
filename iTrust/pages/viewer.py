@@ -37,6 +37,12 @@ from services.data_loader import (
     load_all_requirements
 )
 from services.impact_engine import compute_dependency_reach, evaluate_overall_impact_risk
+from services.github_service import (
+    parse_repository,
+    get_file_content as get_gh_file_content,
+    GitHubAPIError
+)
+from services.github_impact_engine import extract_methods_for_file, detect_language
 from ui.styles import inject_styles, severity_pill
 
 # ── Page Config ─────────────────────────────────────────────────────────────
@@ -242,6 +248,9 @@ qp = st.query_params
 if qp.get("file"):
     st.session_state["v_filename"] = qp.get("file", "")
     st.session_state["v_type"] = qp.get("type", "java")
+    st.session_state["v_repo"] = qp.get("repo", "")
+    st.session_state["v_branch"] = qp.get("branch", "main")
+    st.session_state["v_lines"] = qp.get("lines", "")
     st.session_state["v_req"] = qp.get("req", "")
     st.session_state["v_code"] = qp.get("code", "")
     st.session_state["v_score"] = qp.get("score", "")
@@ -252,6 +261,9 @@ if qp.get("file"):
 
 filename = st.session_state.get("v_filename", "")
 v_type = st.session_state.get("v_type", "java")
+gh_repo = st.session_state.get("v_repo", "")
+gh_branch = st.session_state.get("v_branch", "main")
+gh_lines_raw = st.session_state.get("v_lines", "")
 req_trigger = st.session_state.get("v_req", "")
 code_trigger = st.session_state.get("v_code", "")
 score_param = st.session_state.get("v_score", "")
@@ -266,6 +278,8 @@ if not filename:
     st.stop()
 
 filename = urllib.parse.unquote(filename)
+gh_repo = urllib.parse.unquote(gh_repo) if gh_repo else ""
+gh_branch = urllib.parse.unquote(gh_branch) if gh_branch else "main"
 req_trigger = urllib.parse.unquote(req_trigger) if req_trigger else ""
 code_trigger = urllib.parse.unquote(code_trigger) if code_trigger else ""
 
@@ -282,8 +296,15 @@ if methods_raw:
     impacted_methods_list = [m.strip() for m in unquoted.split(",") if m.strip()]
 
 # ── 2. Top Header Navigation ─────────────────────────────────────────────────
-file_icon = "📂" if v_type == "java" else "📄"
-file_badge = "Java Source Code · iTrust Repository" if v_type == "java" else "Software Requirement Document · iTrust"
+if v_type == "github":
+    file_icon = "☕" if filename.endswith(".java") else "🐍" if filename.endswith(".py") else "📄"
+    file_badge = f"GitHub · {html.escape(gh_repo)} ({html.escape(gh_branch)})" if gh_repo else "GitHub Remote File"
+elif v_type == "java":
+    file_icon = "📂"
+    file_badge = "Java Source Code · iTrust Repository"
+else:
+    file_icon = "📄"
+    file_badge = "Software Requirement Document · iTrust"
 
 c_head_left, c_head_right = st.columns([3, 1])
 with c_head_left:
@@ -291,7 +312,7 @@ with c_head_left:
         f'<div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">'
         f'<a href="/" target="_self" style="background:var(--cia-surface2); color:var(--cia-text); border:1px solid var(--cia-border); padding:5px 12px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:600;">⬅ Back to Impact Analysis</a>'
         f'<span style="font-size:20px;">{file_icon}</span>'
-        f'<span class="viewer-file-title">{html.escape(filename)}</span>'
+        f'<span class="viewer-file-title">{html.escape(filename.split("/")[-1])}</span>'
         f'<span class="viewer-sub-badge">{file_badge}</span>'
         f'</div>'
     )
@@ -739,3 +760,237 @@ elif v_type == "req":
                     )
             else:
                 st.info("No verified code files linked to this requirement in dataset.")
+
+# ── 5. Handle GitHub Remote File View ─────────────────────────────────────────
+elif v_type == "github":
+    token = st.session_state.get("gh_shared_token") or st.session_state.get("gh_token") or st.session_state.get("gh_pred_token") or st.session_state.get("gh_post_token")
+
+    # Resolve owner and repo dynamically
+    owner, repo_name = parse_repository(gh_repo) if gh_repo else (None, None)
+    if not owner or not repo_name:
+        if "/" in gh_repo:
+            parts = gh_repo.split("/")
+            owner, repo_name = parts[0], parts[1]
+        else:
+            st.error("❌ No valid repository specified. Please navigate from the Repository Analysis dashboard.")
+            st.markdown('<a href="/" target="_self" style="display:inline-block; margin-top:10px; background:var(--cia-accent); color:#fff; padding:6px 16px; border-radius:6px; text-decoration:none; font-weight:600;">⬅ Back to Dashboard</a>', unsafe_allow_html=True)
+            st.stop()
+
+    # Fetch remote file content
+    try:
+        source_code = get_gh_file_content(owner, repo_name, filename, ref=gh_branch, token=token)
+    except GitHubAPIError as e:
+        st.error(f"❌ Could not fetch GitHub file `{filename}` from `{owner}/{repo_name}`: {str(e)}")
+        st.markdown('<a href="/" target="_self" style="display:inline-block; margin-top:10px; background:var(--cia-accent); color:#fff; padding:6px 16px; border-radius:6px; text-decoration:none; font-weight:600;">⬅ Back to Dashboard</a>', unsafe_allow_html=True)
+        st.stop()
+    except Exception as e:
+        st.error(f"❌ Error fetching file: {str(e)}")
+        st.stop()
+
+    if not source_code:
+        st.warning(f"File `{filename}` is empty or could not be decoded.")
+        st.stop()
+
+    lines = source_code.splitlines()
+    basename = filename.split("/")[-1]
+    detected_lang = detect_language(basename)
+
+    with c_head_right:
+        st.download_button(
+            "⬇ Download Source",
+            source_code,
+            file_name=basename,
+            mime="text/plain",
+            use_container_width=True
+        )
+
+    # Extract declared methods / functions across languages
+    methods = extract_methods_for_file(source_code, filename)
+    method_lines_map = {}
+    for m in methods:
+        method_lines_map[m["name"]] = m["line"]
+
+    # Parse changed lines from diff if present
+    changed_lines_set = set()
+    if gh_lines_raw:
+        try:
+            for part in urllib.parse.unquote(gh_lines_raw).split(","):
+                part_clean = part.strip()
+                if part_clean.isdigit():
+                    changed_lines_set.add(int(part_clean))
+        except Exception:
+            pass
+
+    # ── Two-Column Layout ─────────────────────────────────────────────────────
+    col_panel, col_code = st.columns([3.2, 6.8])
+
+    with col_panel:
+        # GITHUB FILE CONTEXT CARD
+        diff_info_row = ""
+        if changed_lines_set:
+            diff_info_row = (
+                f'<div class="impact-field">'
+                f'<div class="impact-label">Changed Lines (Diff)</div>'
+                f'<div class="impact-val" style="color:var(--cia-high); font-weight:700;">'
+                f'📍 {len(changed_lines_set)} lines modified in commit'
+                f'</div>'
+                f'</div>'
+            )
+
+        gh_card_html = (
+            f'<div class="impact-card-box">'
+            f'<div class="impact-card-title">🐙 GitHub Remote Context</div>'
+            f'<div class="impact-field">'
+            f'<div class="impact-label">Repository</div>'
+            f'<div class="impact-val" style="color:var(--cia-accent); font-weight:600;">{html.escape(owner)}/{html.escape(repo_name)}</div>'
+            f'</div>'
+            f'<div class="impact-field">'
+            f'<div class="impact-label">Branch / Commit Ref</div>'
+            f'<div class="impact-val"><code style="font-size:12px;">{html.escape(gh_branch)}</code></div>'
+            f'</div>'
+            f'<div class="impact-field">'
+            f'<div class="impact-label">File Path</div>'
+            f'<div class="impact-val" style="font-size:12px; word-break:break-all;">{html.escape(filename)}</div>'
+            f'</div>'
+            f'<div class="impact-field">'
+            f'<div class="impact-label">File Stats & Language</div>'
+            f'<div class="impact-val">{html.escape(detected_lang)} · {len(lines)} lines · {len(methods)} structures/functions</div>'
+            f'</div>'
+            f'{diff_info_row}'
+            f'<div class="impact-field" style="border-top:1px dashed var(--cia-border); padding-top:6px; margin-top:6px;">'
+            f'<div class="impact-label">Traceability Status</div>'
+            f'<div style="font-size:12px; color:var(--cia-text-faint);">⚠️ External Repository (No ground truth)</div>'
+            f'</div>'
+            f'</div>'
+        )
+        st.markdown(gh_card_html, unsafe_allow_html=True)
+
+        # METHOD NAVIGATOR (If methods exist)
+        selected_method = None
+        if methods:
+            st.markdown(
+                (
+                    f'<div style="font-size:12px; text-transform:uppercase; font-weight:700; color:var(--cia-text-faint); letter-spacing:0.5px; margin-bottom:8px; display:flex; align-items:center; gap:6px;">'
+                    f'🔗 Methods Navigator ({len(methods)})'
+                    f'</div>'
+                ),
+                unsafe_allow_html=True
+            )
+
+            method_search = st.text_input(
+                "Search methods",
+                placeholder="Filter methods…",
+                key="gh_method_search",
+                label_visibility="collapsed"
+            )
+
+            method_names = [m["name"] for m in methods]
+            filtered_methods = [
+                m for m in method_names
+                if method_search.lower() in m.lower()
+            ] if method_search else method_names
+
+            if filtered_methods:
+                options = ["Show all methods"] + filtered_methods
+                selected_option = st.selectbox(
+                    "Select method to inspect:",
+                    options,
+                    key="gh_method_select",
+                    label_visibility="collapsed"
+                )
+                if selected_option != "Show all methods":
+                    selected_method = selected_option
+            else:
+                st.caption("No methods match search.")
+
+            if selected_method:
+                line_no = method_lines_map.get(selected_method)
+                sig_match = next((m["signature"] for m in methods if m["name"] == selected_method), selected_method)
+                line_str = f"📍 Line {line_no}" if line_no else "📍 Line: (body)"
+                st.markdown(
+                    f'<div class="selected-method-box">'
+                    f'<div style="font-weight:700; color:var(--cia-accent); font-family:\'JetBrains Mono\',monospace;">{html.escape(sig_match)}</div>'
+                    f'<div style="font-size:11px; color:var(--cia-text-faint); margin-top:2px;">{line_str}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+    # ── RIGHT AREA: Code Viewer ───────────────────────────────────────────────
+    with col_code:
+        tab_code, tab_methods = st.tabs([
+            f"💻 Source Code ({len(lines)} lines)",
+            f"📋 Declared Methods ({len(methods)})"
+        ])
+
+        with tab_code:
+            c_s1, c_s2 = st.columns([3, 2])
+            with c_s1:
+                kw_search = st.text_input(
+                    "Search in code",
+                    placeholder="Search in source code…",
+                    key="gh_code_kw",
+                    label_visibility="collapsed"
+                )
+            with c_s2:
+                diff_tag = f" · <b style='color:var(--cia-high);'>{len(changed_lines_set)} changed lines</b>" if changed_lines_set else ""
+                st.markdown(
+                    f"<div style='font-size:12px; color:var(--cia-text-muted); padding-top:6px;'>"
+                    f"<b>{len(lines)} lines</b>{diff_tag}"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            active_line = method_lines_map.get(selected_method) if selected_method else None
+
+            rows_html = []
+            for line_idx, line_str in enumerate(lines, 1):
+                escaped_line = html.escape(line_str) if line_str else "&nbsp;"
+
+                if kw_search and kw_search.strip():
+                    escaped_kw = html.escape(kw_search.strip())
+                    escaped_line = re.sub(
+                        f"({re.escape(escaped_kw)})",
+                        r'<mark style="background:rgba(255,220,0,0.35); color:inherit; border-radius:2px; padding:0 2px;">\1</mark>',
+                        escaped_line,
+                        flags=re.IGNORECASE
+                    )
+
+                is_active = (active_line == line_idx)
+                is_changed = (line_idx in changed_lines_set)
+
+                if is_active:
+                    row_cls = "code-row line-highlight-active"
+                elif is_changed:
+                    row_cls = "code-row line-highlight"
+                else:
+                    row_cls = "code-row"
+
+                rows_html.append(
+                    f'<tr class="{row_cls}">'
+                    f'<td class="line-num">{line_idx}</td>'
+                    f'<td class="line-code">{escaped_line}</td>'
+                    f'</tr>'
+                )
+
+            code_table_html = (
+                f'<div class="code-container">'
+                f'<table class="code-table">'
+                f'<tbody>'
+                f'{"".join(rows_html)}'
+                f'</tbody>'
+                f'</table>'
+                f'</div>'
+            )
+            st.markdown(code_table_html, unsafe_allow_html=True)
+
+        with tab_methods:
+            if methods:
+                st.caption(f"{len(methods)} declared methods detected in `{basename}`:")
+                methods_df = pd.DataFrame([
+                    {"Line": m["line"], "Return Type": m["return_type"], "Method Signature": m["signature"]}
+                    for m in methods
+                ])
+                st.dataframe(methods_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No method declarations detected.")
+

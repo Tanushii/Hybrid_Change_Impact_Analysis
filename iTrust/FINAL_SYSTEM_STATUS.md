@@ -192,14 +192,32 @@ iTrust/
 ├── services/                   # Backend logic layer
 │   ├── data_loader.py          # Cached loaders for links, call graph, file index & texts
 │   ├── ml_engine.py            # ML inference engine (501-dim feature extraction & ranking)
-│   └── impact_engine.py        # Hybrid orchestrator combining ML + Traceability + Call Graph
+│   ├── impact_engine.py        # Hybrid orchestrator combining ML + Traceability + Call Graph
+│   ├── github_service.py       # GitHub REST API client (trees, raw files, commits, diffs)
+│   └── github_impact_engine.py # Mode 1 (Predictive) & Mode 2 (Post-Change) analysis engine
 ├── ui/                         # Presentation layer
 │   ├── styles.py               # CSS tokens, theme styling & artifact card renderer
 │   ├── req_to_code.py          # Requirement -> Code UI with risk tabs & candidate ranking
-│   └── code_to_req.py          # Code -> Requirement UI with risk tabs & candidate ranking
+│   ├── code_to_req.py          # Code -> Requirement UI with risk tabs & candidate ranking
+│   ├── github_predictive.py    # GitHub Mode 1 (Predictive / Before Change) UI
+│   └── github_post_change.py   # GitHub Mode 2 (Post-Change / Commit Comparison) UI
 └── pages/                      # Streamlit multi-page routes
-    └── viewer.py               # In-source Java & requirement viewer with line highlighting
+    └── viewer.py               # Unified 2-column local & GitHub file viewer
 ```
+
+---
+
+## 8. GitHub Integration Modes
+
+### Mode 1 — Predictive Change Impact Analysis (Before Change)
+- **Objective**: "I am planning to change this file. What could be impacted across the repository?"
+- **Data Flow**: `UI -> github_service.get_file_tree -> Select File -> github_impact_engine.analyze_github_predictive -> Lightweight AST & ML Similarity -> External Risk Policy -> Multi-Tab Impact Cards`.
+- **Output**: Model-based relationship evidence + repository structural evidence + caller/callee sets + overall impact risk.
+
+### Mode 2 — Post-Change Change Impact Analysis (Commit Comparison)
+- **Objective**: "I changed code between two commits. What is impacted by the actual diff?"
+- **Data Flow**: `UI -> Select Base & New Commits -> github_service.compare_commits -> parse_diff_hunks -> extract_changed_methods -> github_impact_engine.analyze_github_post_change -> Per-File Ripple Risk`.
+- **Output**: Change summary metrics (Added/Modified/Deleted) + changed line ranges + modified Java methods + structural reach + overall change risk.
 
 ---
 
