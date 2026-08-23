@@ -1,0 +1,55 @@
+{
+  "project": "Intelligent Change Impact Analysis (iTrust)",
+  "version": "1.0.0",
+  "architecture": "SBERT (all-MiniLM-L6-v2) + TF-IDF (500) + Cosine Similarity + XGBoost",
+  "evaluation_protocol": {
+    "dataset": "iTrust (131 requirements, 226 code files, 286 links)",
+    "total_pairs": 29606,
+    "balanced_pairs": 572,
+    "negative_sampling_seed": 42,
+    "split_strategy": "Stratified 80/20 train/test split",
+    "split_random_state": 42,
+    "train_samples": 457,
+    "test_samples": 115,
+    "leakage_protection": "TF-IDF fitted exclusively on train split"
+  },
+  "feature_dimensions": {
+    "tfidf_features": 500,
+    "semantic_similarity_features": 1,
+    "total_features": 501
+  },
+  "model_configuration": {
+    "model_type": "XGBClassifier",
+    "n_estimators": 150,
+    "max_depth": 6,
+    "learning_rate": 0.1,
+    "random_state": 42,
+    "eval_metric": "logloss"
+  },
+  "metrics": {
+    "accuracy": 0.8522,
+    "precision_class_1_linked": 0.8125,
+    "recall_class_1_linked": 0.9123,
+    "f1_class_1_linked": 0.8595,
+    "precision_class_0_unlinked": 0.902,
+    "recall_class_0_unlinked": 0.7931,
+    "f1_class_0_unlinked": 0.844,
+    "macro_avg_f1": 0.8518,
+    "confusion_matrix": {
+      "true_negative": 46,
+      "false_positive": 12,
+      "false_negative": 5,
+      "true_positive": 52
+    }
+  },
+  "terminology_and_interpretation": {
+    "model_output_name": "ML Relationship Confidence / Relationship Score",
+    "interpretation": "The model was trained on a 1:1 balanced sample of positive and negative pairs. The output score represents the model's confidence in a semantic/lexical traceability relationship between a requirement and a code artifact, not an unconditional natural-distribution probability.",
+    "hybrid_layers": {
+      "ml_layer": "ML Relationship Confidence (XGBoost)",
+      "traceability_layer": "Verified Traceability Links (Ground Truth)",
+      "dependency_layer": "Dependency Reach (Call Graph Propagation)",
+      "composite_metric": "Overall Impact Risk"
+    }
+  }
+}
