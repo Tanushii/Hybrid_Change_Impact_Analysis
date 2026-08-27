@@ -26,6 +26,7 @@ import ui.req_to_code as mode_r2c
 import ui.code_to_req as mode_c2r
 import ui.github_predictive as mode_gh_pred
 import ui.github_post_change as mode_gh_post
+import ui.results as mode_results
 
 # ── Global styles ────────────────────────────────────────────────────────────
 inject_styles()
@@ -69,6 +70,7 @@ with st.sidebar:
             "🟠  Post-Change Impact Analysis (Commit Diff)",
             "📋  iTrust: Requirement → Code",
             "🔧  iTrust: Code → Requirement",
+            "📊  Results & Evaluation",
         ],
         label_visibility="collapsed",
     )
@@ -135,3 +137,5 @@ elif mode == "🔧  iTrust: Code → Requirement":
         all_req_texts=all_req_texts,
         all_code_texts=all_code_texts
     )
+elif mode == "📊  Results & Evaluation":
+    mode_results.render()

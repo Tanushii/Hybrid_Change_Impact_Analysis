@@ -381,18 +381,10 @@ def render():
 
 
 def _render_github_artifact_card(item: dict, owner: str, repo: str, branch: str):
-    """Render a single impact card for a GitHub repository artifact."""
+    """Render a single impact card for a GitHub repository artifact using native Streamlit containers."""
     score_pct = item["ml_score"] * 100.0
-    safe_name = html.escape(item["filename"])
-    safe_path = html.escape(item["path"])
-
-    struct_badge = (
-        '<span class="badge-verified">🔗 Structural Link</span>'
-        if item["is_structurally_linked"]
-        else '<span class="badge-unverified">📊 ML Predicted Relationship</span>'
-    )
-
-    risk_pill = severity_pill(item["risk_tier"])
+    safe_name = item["filename"]
+    safe_path = item["path"]
 
     viewer_url = (
         f"/viewer?type=github&repo={urllib.parse.quote(f'{owner}/{repo}')}"
@@ -400,44 +392,37 @@ def _render_github_artifact_card(item: dict, owner: str, repo: str, branch: str)
         f"&file={urllib.parse.quote(item['path'])}"
     )
 
-    card_html = f"""
-<div class="artifact-impact-card">
-<div class="artifact-card-header">
-<div>
-<span style="font-size:12px; color:var(--cia-text-faint); font-weight:600; text-transform:uppercase;">Repository File:</span>
-<span class="artifact-name" style="margin-left:6px;">{safe_name}</span>
-<span style="font-size:11px; color:var(--cia-text-faint); margin-left:4px;">({safe_path})</span>
-</div>
-<div>
-<a href="{viewer_url}" target="_blank" style="background:var(--cia-surface2); color:var(--cia-accent); border:1px solid var(--cia-border); padding:3px 10px; border-radius:6px; font-size:12px; text-decoration:none; font-weight:600;">Inspect Source ↗</a>
-</div>
-</div>
-<div class="artifact-meta-grid">
-<div class="artifact-meta-item">
-<div class="artifact-meta-label">1. ML Relationship Evidence</div>
-<div class="artifact-meta-value" style="font-size:15px; color:var(--cia-accent);">
-{score_pct:.2f}% <span style="font-size:11px; font-weight:500; color:var(--cia-text-faint);">({item["confidence_level"]})</span>
-</div>
-<div class="score-bar-bg">
-<div class="score-bar-fill" style="width: {min(max(score_pct, 4), 100):.1f}%;"></div>
-</div>
-</div>
-<div class="artifact-meta-item">
-<div class="artifact-meta-label">2. Structural Evidence</div>
-<div style="margin-top:4px;">{struct_badge}</div>
-</div>
-<div class="artifact-meta-item">
-<div class="artifact-meta-label">3. Traceability</div>
-<div style="margin-top:4px; font-size:12px; color:var(--cia-text-faint);">⚠️ Not Available for External Repository</div>
-</div>
-<div class="artifact-meta-item">
-<div class="artifact-meta-label">4. Overall Impact Risk</div>
-<div style="margin-top:4px;">{risk_pill}</div>
-</div>
-</div>
-<div style="font-size:12px; color:var(--cia-text-faint); padding-top:6px; border-top:1px dashed var(--cia-border); margin-top:6px;">
-<b>Risk Rationale:</b> {html.escape(item["risk_rationale"])}
-</div>
-</div>
-"""
-    st.markdown(card_html, unsafe_allow_html=True)
+    with st.container(border=True):
+        c_title, c_btn = st.columns([3.8, 1.2])
+        with c_title:
+            icon = "📄" if safe_name.endswith((".java", ".py", ".ts", ".js", ".go", ".cpp", ".c", ".cs")) else "📁"
+            st.markdown(
+                f'<div style="display:flex; align-items:center; gap:8px; margin-bottom:2px;">'
+                f'<span style="font-size:18px;">{icon}</span>'
+                f'<span style="font-family:JetBrains Mono, monospace; font-size:16px; font-weight:700; color:var(--cia-accent);">{html.escape(safe_name)}</span>'
+                f'<span style="font-size:11px; color:var(--cia-text-faint); font-family:JetBrains Mono, monospace;">({html.escape(safe_path)})</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with c_btn:
+            st.link_button("Inspect Source ↗", viewer_url, use_container_width=True)
+
+        c_risk, c_ml, c_struct, c_trace = st.columns(4)
+        with c_risk:
+            st.caption("Overall Impact Risk")
+            st.markdown(severity_pill(item["risk_tier"]), unsafe_allow_html=True)
+        with c_ml:
+            st.caption("ML Relationship Score")
+            st.markdown(f'<b style="font-size:15px; font-family:JetBrains Mono, monospace; color:var(--cia-text);">{score_pct:.2f}%</b> <span style="font-size:11px; color:var(--cia-text-faint);">({item["confidence_level"]})</span>', unsafe_allow_html=True)
+        with c_struct:
+            st.caption("Structural Evidence")
+            if item["is_structurally_linked"]:
+                st.markdown('<span class="badge-verified">🔗 Structural Link</span>', unsafe_allow_html=True)
+            else:
+                st.markdown('<span class="badge-unverified">📊 ML Predicted</span>', unsafe_allow_html=True)
+        with c_trace:
+            st.caption("Traceability Status")
+            st.markdown('<span style="font-size:11px; color:var(--cia-text-faint);">N/A (External Repo)</span>', unsafe_allow_html=True)
+
+        if item.get("risk_rationale"):
+            st.caption(f"**Rationale:** {item['risk_rationale']}")

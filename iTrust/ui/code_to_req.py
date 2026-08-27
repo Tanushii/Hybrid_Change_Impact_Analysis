@@ -7,7 +7,7 @@ Traceability Evidence, Dependency Reach, and Overall Risk.
 import urllib.parse
 import pandas as pd
 import streamlit as st
-from ui.styles import metric_card, severity_pill, render_artifact_card
+from ui.styles import metric_card, severity_pill, render_artifact_card, render_artifact_card_native
 from services.impact_engine import analyze_code_to_req
 
 
@@ -99,7 +99,7 @@ def render(code_to_req, callgraph, file_index, all_req_texts=None, all_code_text
             with c_filter:
                 filter_choice = st.radio(
                     "Filter Requirements:",
-                    ["Actionable (High & Medium Risk)", "All Requirements (Top 30)", "Verified Links Only", "ML Predicted Only"],
+                    ["Actionable (High & Medium Risk)", "All Candidates (Top 30)"],
                     horizontal=True,
                     label_visibility="collapsed"
                 )
@@ -109,10 +109,6 @@ def render(code_to_req, callgraph, file_index, all_req_texts=None, all_code_text
             # Apply filter
             if filter_choice == "Actionable (High & Medium Risk)":
                 display_items = [a for a in artifacts_report if a["overall_impact_risk"] in ["HIGH", "MEDIUM"]]
-            elif filter_choice == "Verified Links Only":
-                display_items = [a for a in artifacts_report if a["verified_traceability"]]
-            elif filter_choice == "ML Predicted Only":
-                display_items = [a for a in artifacts_report if a["ml_predicted_label"] == 1]
             else:
                 display_items = artifacts_report[:30]
 
@@ -130,19 +126,18 @@ def render(code_to_req, callgraph, file_index, all_req_texts=None, all_code_text
                         f"&risk={risk_param}&dep={dep_param}"
                     )
 
-                    card_html = render_artifact_card(
-                        title_label="Requirement",
+                    render_artifact_card_native(
                         artifact_name=item["artifact_name"],
+                        overall_risk=item["overall_impact_risk"],
                         ml_score=item["ml_relationship_score"],
-                        ml_conf=item["ml_confidence_level"],
-                        is_verified=item["verified_traceability"],
                         dependency_reach=item["dependency_reach"],
                         method_count=item["impacted_method_count"],
-                        overall_risk=item["overall_impact_risk"],
+                        is_verified=item["verified_traceability"],
+                        viewer_url=viewer_url,
                         risk_rationale=item["risk_rationale"],
-                        viewer_url=viewer_url
+                        title_label="Requirement",
+                        btn_label="Inspect Requirement ↗",
                     )
-                    st.markdown(card_html, unsafe_allow_html=True)
             else:
                 st.info("No requirements match the selected filter.")
 

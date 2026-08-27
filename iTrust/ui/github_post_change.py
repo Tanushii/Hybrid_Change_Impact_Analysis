@@ -259,50 +259,14 @@ def render():
 
 
 def _render_changed_file_card(fr: dict, owner: str, repo: str, branch: str, commit_sha: str):
-    """Render an impact card for a single changed file in Mode 2."""
-    safe_name = html.escape(fr["basename"])
-    safe_path = html.escape(fr["filename"])
-    lang_label = html.escape(fr.get("language", detect_language(fr["basename"])))
+    """Render an impact card for a single changed file in Mode 2 using native Streamlit containers."""
+    safe_name = fr["basename"]
+    safe_path = fr["filename"]
+    lang_label = fr.get("language", detect_language(fr["basename"]))
     status = fr["status"]
 
     status_icons = {"added": "🟢 Added", "modified": "🟡 Modified", "removed": "🔴 Deleted", "renamed": "🔄 Renamed"}
     status_label = status_icons.get(status, f"⚪ {status}")
-
-    risk_pill = severity_pill(fr["risk_tier"])
-
-    # Changed methods / functions pills
-    methods_html = ""
-    if fr.get("changed_methods"):
-        method_pills = []
-        for m in fr["changed_methods"][:8]:
-            mod_icon = "🔧" if m.get("is_directly_modified") else "📌"
-            method_pills.append(
-                f'<span style="background:var(--cia-surface2); border:1px solid var(--cia-border); '
-                f'padding:2px 8px; border-radius:4px; font-size:11px; font-family:JetBrains Mono,monospace; '
-                f'margin:2px; display:inline-block;">{mod_icon} {html.escape(m["name"])}()</span>'
-            )
-        methods_html = (
-            '<div style="margin-top:6px;">'
-            '<div style="font-size:11px; font-weight:600; color:var(--cia-text-faint); '
-            'text-transform:uppercase; margin-bottom:4px;">Changed Methods / Functions</div>'
-            + "".join(method_pills)
-            + '</div>'
-        )
-
-    # Changed hunks
-    hunks_html = ""
-    if fr.get("changed_hunks"):
-        hunk_items = ", ".join(html.escape(h) for h in fr["changed_hunks"][:6])
-        hunks_html = (
-            f'<div style="font-size:12px; color:var(--cia-text-muted); margin-top:4px;">'
-            f'📍 <b>Changed Ranges:</b> {hunk_items}</div>'
-        )
-
-    # Diff stats
-    diff_stats = (
-        f'<span style="color:#3FB950;">+{fr["additions"]}</span> '
-        f'<span style="color:#F85149;">−{fr["deletions"]}</span>'
-    )
 
     viewer_url = (
         f"/viewer?type=github&repo={urllib.parse.quote(f'{owner}/{repo}')}"
@@ -313,46 +277,53 @@ def _render_changed_file_card(fr: dict, owner: str, repo: str, branch: str, comm
         lines_param = ",".join(str(l) for l in fr["changed_lines"][:50])
         viewer_url += f"&lines={lines_param}"
 
-    card_html = f"""
-<div class="artifact-impact-card">
-<div class="artifact-card-header">
-<div>
-<span style="font-size:12px; color:var(--cia-text-faint); font-weight:600;">{status_label}</span>
-<span class="artifact-name" style="margin-left:8px;">{safe_name}</span>
-<span style="font-size:11px; color:var(--cia-text-faint); margin-left:4px;">({lang_label} · {safe_path})</span>
-<span style="font-size:12px; margin-left:8px; font-family:JetBrains Mono,monospace;">{diff_stats}</span>
-</div>
-<div>
-<a href="{viewer_url}" target="_blank" style="background:var(--cia-surface2); color:var(--cia-accent); border:1px solid var(--cia-border); padding:3px 10px; border-radius:6px; font-size:12px; text-decoration:none; font-weight:600;">Inspect Source ↗</a>
-</div>
-</div>
-<div class="artifact-meta-grid">
-<div class="artifact-meta-item">
-<div class="artifact-meta-label">Diff Summary</div>
-<div class="artifact-meta-value" style="font-size:13px;">
-{fr["changes"]} lines changed ({diff_stats})
-</div>
-{hunks_html}
-</div>
-<div class="artifact-meta-item">
-<div class="artifact-meta-label">Dependency Reach</div>
-<div style="margin-top:4px; font-size:13px; font-weight:600;">
-{fr["structural_badge"]} {fr["structural_reach"]}
-</div>
-</div>
-<div class="artifact-meta-item">
-<div class="artifact-meta-label">Traceability</div>
-<div style="margin-top:4px; font-size:12px; color:var(--cia-text-faint);">⚠️ External Repository</div>
-</div>
-<div class="artifact-meta-item">
-<div class="artifact-meta-label">Overall Impact Risk</div>
-<div style="margin-top:4px;">{risk_pill}</div>
-</div>
-</div>
-{methods_html}
-<div style="font-size:12px; color:var(--cia-text-faint); padding-top:6px; border-top:1px dashed var(--cia-border); margin-top:6px;">
-<b>Risk Rationale:</b> {html.escape(fr["risk_rationale"])}
-</div>
-</div>
-"""
-    st.markdown(card_html, unsafe_allow_html=True)
+    with st.container(border=True):
+        c_title, c_btn = st.columns([3.8, 1.2])
+        with c_title:
+            st.markdown(
+                f'<div style="display:flex; align-items:center; gap:8px; margin-bottom:2px; flex-wrap:wrap;">'
+                f'<span style="font-size:12px; font-weight:600; color:var(--cia-text-faint);">{status_label}</span>'
+                f'<span style="font-family:JetBrains Mono, monospace; font-size:16px; font-weight:700; color:var(--cia-accent);">{html.escape(safe_name)}</span>'
+                f'<span style="font-size:11px; color:var(--cia-text-faint); font-family:JetBrains Mono, monospace;">({lang_label} · {html.escape(safe_path)})</span>'
+                f'<span style="font-size:12px; font-family:JetBrains Mono, monospace; margin-left:6px;"><span style="color:#3FB950;">+{fr["additions"]}</span> <span style="color:#F85149;">−{fr["deletions"]}</span></span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with c_btn:
+            st.link_button("Inspect Source ↗", viewer_url, use_container_width=True)
+
+        c_risk, c_lines, c_dep, c_trace = st.columns(4)
+        with c_risk:
+            st.caption("Overall Impact Risk")
+            st.markdown(severity_pill(fr["risk_tier"]), unsafe_allow_html=True)
+        with c_lines:
+            st.caption("Diff Summary")
+            st.markdown(f'<b style="font-size:14px; color:var(--cia-text);">{fr["changes"]} lines</b> (<span style="color:#3FB950;">+{fr["additions"]}</span> <span style="color:#F85149;">−{fr["deletions"]}</span>)', unsafe_allow_html=True)
+        with c_dep:
+            st.caption("Dependency Reach")
+            st.markdown(f'<span style="font-size:13px; font-weight:600;">{fr["structural_badge"]} {fr["structural_reach"]}</span>', unsafe_allow_html=True)
+        with c_trace:
+            st.caption("Traceability Status")
+            st.markdown('<span style="font-size:11px; color:var(--cia-text-faint);">N/A (External Repo)</span>', unsafe_allow_html=True)
+
+        # Changed methods / functions pills
+        if fr.get("changed_methods"):
+            method_pills = []
+            for m in fr["changed_methods"][:8]:
+                mod_icon = "🔧" if m.get("is_directly_modified") else "📌"
+                method_pills.append(
+                    f'<span style="background:var(--cia-surface2); border:1px solid var(--cia-border); '
+                    f'padding:2px 8px; border-radius:4px; font-size:11px; font-family:JetBrains Mono,monospace; '
+                    f'margin:2px; display:inline-block;">{mod_icon} {html.escape(m["name"])}()</span>'
+                )
+            st.markdown(
+                '<div style="margin-top:6px;">'
+                '<span style="font-size:11px; font-weight:600; color:var(--cia-text-faint); text-transform:uppercase;">Changed Methods: </span>'
+                + "".join(method_pills)
+                + '</div>',
+                unsafe_allow_html=True,
+            )
+
+        if fr.get("risk_rationale"):
+            st.caption(f"**Rationale:** {fr['risk_rationale']}")
+

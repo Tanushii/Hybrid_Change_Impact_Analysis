@@ -331,6 +331,62 @@ def severity_pill(severity):
     return f'<span class="{cls}">{icons.get(sev, "")} {html.escape(sev)}</span>'
 
 
+def render_artifact_card_native(
+    artifact_name: str,
+    overall_risk: str,
+    ml_score: float,
+    dependency_reach: str,
+    method_count: int,
+    is_verified: bool,
+    viewer_url: str,
+    risk_rationale: str = "",
+    title_label: str = "Code File",
+    btn_label: str = "Inspect Source ↗",
+):
+    """
+    Renders a clean, high-visibility artifact impact card using native Streamlit containers and columns.
+    Completely eliminates Markdown indentation parsing bugs and prevents raw HTML leaking to UI.
+    """
+    score_pct = ml_score * 100.0
+    icon = "📄" if artifact_name.endswith((".java", ".txt", ".py", ".ts", ".js", ".go")) else "📁"
+
+    with st.container(border=True):
+        c_title, c_btn = st.columns([3.8, 1.2])
+        with c_title:
+            st.markdown(
+                f'<div style="display:flex; align-items:center; gap:8px; margin-bottom:2px;">'
+                f'<span style="font-size:18px;">{icon}</span>'
+                f'<span style="font-family:JetBrains Mono, monospace; font-size:16px; font-weight:700; color:var(--cia-accent);">{html.escape(artifact_name)}</span>'
+                f'<span style="font-size:11px; color:var(--cia-text-faint); text-transform:uppercase; font-weight:600; margin-left:4px;">({html.escape(title_label)})</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with c_btn:
+            st.link_button(btn_label, viewer_url, use_container_width=True)
+
+        # 4 Key Impact Metrics
+        c_risk, c_ml, c_dep, c_trace = st.columns(4)
+        with c_risk:
+            st.caption("Overall Impact Risk")
+            st.markdown(severity_pill(overall_risk), unsafe_allow_html=True)
+        with c_ml:
+            st.caption("ML Relationship Score")
+            st.markdown(f'<b style="font-size:15px; font-family:JetBrains Mono, monospace; color:var(--cia-text);">{score_pct:.2f}%</b>', unsafe_allow_html=True)
+        with c_dep:
+            st.caption("Dependency Reach")
+            dep_icon = {"HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟢", "NONE": "⚪"}.get(dependency_reach.upper(), "⚪")
+            st.markdown(f'<span style="font-size:13px; font-weight:600;">{dep_icon} {html.escape(dependency_reach)} ({method_count} methods)</span>', unsafe_allow_html=True)
+        with c_trace:
+            st.caption("Traceability Status")
+            if is_verified:
+                st.markdown('<span class="badge-verified">✓ Verified Traceability Link</span>', unsafe_allow_html=True)
+            else:
+                st.markdown('<span class="badge-unverified">⚡ ML Predicted Relationship</span>', unsafe_allow_html=True)
+
+        if risk_rationale:
+            st.caption(f"**Rationale:** {risk_rationale}")
+
+
 def render_artifact_card(
     title_label: str,
     artifact_name: str,
@@ -344,65 +400,37 @@ def render_artifact_card(
     viewer_url: str
 ) -> str:
     """
-    Renders the exact multi-layer impact card designed for the UI.
+    Renders single-line, zero-indent HTML to prevent Markdown parser code-block quirks.
     """
     score_pct = ml_score * 100.0
     safe_name = html.escape(artifact_name)
     safe_title = html.escape(title_label)
     safe_rationale = html.escape(risk_rationale)
     
-    # Traceability badge
     if is_verified:
         trace_badge = '<span class="badge-verified">✓ Verified Traceability</span>'
     else:
         trace_badge = '<span class="badge-unverified">⚡ ML Predicted Candidate</span>'
 
-    # Dependency Evidence Badge
     dep_tier = dependency_reach.upper()
     dep_icon = {"HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟢", "NONE": "⚪"}.get(dep_tier, "⚪")
     dep_badge = f'<span style="font-weight:600;">{dep_icon} {dep_tier} ({method_count} methods)</span>'
-
-    # Overall Risk Pill
     risk_pill = severity_pill(overall_risk)
 
-    return f"""
-<div class="artifact-impact-card">
-    <div class="artifact-card-header">
-        <div>
-            <span style="font-size:12px; color:var(--cia-text-faint); font-weight:600; text-transform:uppercase;">{safe_title}:</span>
-            <span class="artifact-name" style="margin-left:6px;">{safe_name}</span>
-        </div>
-        <div>
-            <a href="{viewer_url}" target="_blank" style="background:var(--cia-surface2); color:var(--cia-accent); border:1px solid var(--cia-border); padding:3px 10px; border-radius:6px; font-size:12px; text-decoration:none; font-weight:600;">Inspect Source ↗</a>
-        </div>
-    </div>
-    
-    <div class="artifact-meta-grid">
-        <div class="artifact-meta-item">
-            <div class="artifact-meta-label">1. ML Relationship Score</div>
-            <div class="artifact-meta-value" style="font-size:15px; color:var(--cia-accent);">
-                {score_pct:.2f}% <span style="font-size:11px; font-weight:500; color:var(--cia-text-faint);">({ml_conf})</span>
-            </div>
-            <div class="score-bar-bg">
-                <div class="score-bar-fill" style="width: {min(max(score_pct, 4), 100):.1f}%;"></div>
-            </div>
-        </div>
-        <div class="artifact-meta-item">
-            <div class="artifact-meta-label">2. Traceability Evidence</div>
-            <div style="margin-top:4px;">{trace_badge}</div>
-        </div>
-        <div class="artifact-meta-item">
-            <div class="artifact-meta-label">3. Dependency Evidence</div>
-            <div style="margin-top:4px; font-size:13px;">{dep_badge}</div>
-        </div>
-        <div class="artifact-meta-item">
-            <div class="artifact-meta-label">4. Overall Impact Risk</div>
-            <div style="margin-top:4px;">{risk_pill}</div>
-        </div>
-    </div>
+    return (
+        f'<div class="artifact-impact-card">'
+        f'<div class="artifact-card-header">'
+        f'<div><span style="font-size:12px; color:var(--cia-text-faint); font-weight:600; text-transform:uppercase;">{safe_title}:</span> '
+        f'<span class="artifact-name" style="margin-left:6px;">{safe_name}</span></div>'
+        f'<div><a href="{viewer_url}" target="_blank" style="background:var(--cia-surface2); color:var(--cia-accent); border:1px solid var(--cia-border); padding:4px 12px; border-radius:6px; font-size:12px; text-decoration:none; font-weight:600;">Inspect Source ↗</a></div>'
+        f'</div>'
+        f'<div class="artifact-meta-grid">'
+        f'<div class="artifact-meta-item"><div class="artifact-meta-label">1. ML Relationship Score</div><div class="artifact-meta-value" style="font-size:15px; color:var(--cia-accent);">{score_pct:.2f}% <span style="font-size:11px; font-weight:500; color:var(--cia-text-faint);">({ml_conf})</span></div></div>'
+        f'<div class="artifact-meta-item"><div class="artifact-meta-label">2. Traceability Evidence</div><div style="margin-top:4px;">{trace_badge}</div></div>'
+        f'<div class="artifact-meta-item"><div class="artifact-meta-label">3. Dependency Evidence</div><div style="margin-top:4px; font-size:13px;">{dep_badge}</div></div>'
+        f'<div class="artifact-meta-item"><div class="artifact-meta-label">4. Overall Impact Risk</div><div style="margin-top:4px;">{risk_pill}</div></div>'
+        f'</div>'
+        f'<div style="font-size:12px; color:var(--cia-text-faint); padding-top:6px; border-top:1px dashed var(--cia-border); margin-top:6px;"><b>Risk Rationale:</b> {safe_rationale}</div>'
+        f'</div>'
+    )
 
-    <div style="font-size:12px; color:var(--cia-text-faint); padding-top:6px; border-top:1px dashed var(--cia-border); margin-top:6px;">
-        <b>Risk Rationale:</b> {safe_rationale}
-    </div>
-</div>
-"""
