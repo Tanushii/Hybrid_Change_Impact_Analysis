@@ -117,7 +117,7 @@ public class AuthDAO {
 			case PATIENT:
 				return factory.getPatientDAO().getName(mid);
 			case TESTER:
-				return String.valueOf(mid);
+				return "Tester " + mid;
 			default:
 				throw new iTrustException("Role " + role + " not supported");
 		}
