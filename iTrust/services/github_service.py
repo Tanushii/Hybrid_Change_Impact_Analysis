@@ -106,7 +106,7 @@ def _format_rate_limit_error(resp: requests.Response) -> str:
 def get_rate_limit_status(token: Optional[str] = None) -> Dict[str, Any]:
     """
     Fetch current GitHub API rate limit status.
-    Returns: {"limit": int, "remaining": int, "used": int, "reset_time": str, "is_authenticated": bool}
+    Returns: {"limit": int, "remaining": int, "used": int, "reset_time": str, "is_authenticated": bool, "auth_error": Optional[str]}
     """
     url = f"{GITHUB_API_BASE}/rate_limit"
     headers = _get_headers(token)
@@ -125,11 +125,28 @@ def get_rate_limit_status(token: Optional[str] = None) -> Dict[str, Any]:
                 "remaining": remaining,
                 "used": core.get("used", limit - remaining),
                 "reset_time": reset_time,
-                "is_authenticated": bool(token and token.strip())
+                "is_authenticated": bool(token and token.strip() and limit > 60),
+                "auth_error": None
+            }
+        elif resp.status_code == 401:
+            return {
+                "limit": 0,
+                "remaining": 0,
+                "used": 0,
+                "reset_time": "",
+                "is_authenticated": False,
+                "auth_error": "Invalid GitHub Personal Access Token (401 Unauthorized). Please check your token."
             }
     except Exception:
         pass
-    return {"limit": 60, "remaining": 60, "used": 0, "reset_time": "", "is_authenticated": bool(token and token.strip())}
+    return {
+        "limit": 60,
+        "remaining": 60,
+        "used": 0,
+        "reset_time": "",
+        "is_authenticated": bool(token and token.strip()),
+        "auth_error": None
+    }
 
 
 def get_repository_info(owner: str, repo: str, token: Optional[str] = None) -> Dict[str, Any]:

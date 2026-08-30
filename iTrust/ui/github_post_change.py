@@ -68,21 +68,27 @@ def render():
     rl_remaining = rl_info["remaining"]
     rl_limit = rl_info["limit"]
     is_authed = rl_info["is_authenticated"]
+    auth_error = rl_info.get("auth_error")
 
-    if rl_remaining == 0 and not is_authed:
-        st.error(
-            "🚫 **GitHub public API rate limit exhausted (0/60).** "
-            "Enter a GitHub Personal Access Token in the field above to continue with 5,000 requests/hour."
+    if auth_error:
+        st.error(f"❌ {auth_error}")
+        return
+    elif rl_remaining == 0 and not is_authed:
+        st.warning(
+            "⚠️ GitHub public API limit exhausted (0/60). "
+            "Add a GitHub Personal Access Token above to continue with the authenticated 5,000 requests/hour limit."
         )
+        return
     elif rl_remaining == 0 and is_authed:
         st.error("🚫 **Authenticated GitHub API rate limit exhausted.** Your token quota has been used up.")
+        return
     else:
-        rl_color = "#3FB950" if rl_remaining > 100 else "#E3B341" if rl_remaining > 10 else "#F85149"
+        rl_color = "#15803D" if rl_remaining > 100 else "#92400E" if rl_remaining > 10 else "#B91C1C"
         auth_icon = "🔑 Authenticated GitHub API" if is_authed else "🌐 Public GitHub API"
         reset_text = f" · Resets {rl_info['reset_time']}" if rl_info.get("reset_time") else ""
         st.markdown(
-            f'<div style="font-size:12px; color:var(--cia-text-faint); margin-bottom:8px; '
-            f'background:rgba(63,185,80,0.06); border:1px solid rgba(63,185,80,0.2); '
+            f'<div style="font-size:12px; color:var(--cia-text-muted); margin-bottom:8px; '
+            f'background:var(--cia-surface2); border:1px solid var(--cia-border); '
             f'border-radius:6px; padding:6px 12px;">'
             f'{auth_icon}: <b style="color:{rl_color}">{rl_remaining:,}/{rl_limit:,}</b> requests remaining{reset_text}'
             f'</div>',
