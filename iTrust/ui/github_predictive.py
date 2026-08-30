@@ -8,6 +8,7 @@ repository structure, identifies structural dependencies,
 and evaluates model-based relationship evidence.
 """
 
+import time
 import html
 import urllib.parse
 import streamlit as st
@@ -23,7 +24,8 @@ from services.github_service import (
 )
 from services.github_impact_engine import (
     analyze_github_predictive,
-    detect_language
+    detect_language,
+    _fetch_files_concurrent
 )
 
 # Supported source file extensions for repository discovery
@@ -63,29 +65,41 @@ def render():
             "GitHub Token (Optional)",
             value=default_token,
             type="password",
-            placeholder="ghp_xxxx... (increases rate limit)",
+            placeholder="ghp_xxxx... (increases rate limit to 5,000/hr)",
             key="gh_pred_token",
         )
 
-    # Preserve in shared session state
-    if repo_input != default_repo:
-        st.session_state["gh_shared_repo"] = repo_input
-    if token_input != default_token:
-        st.session_state["gh_shared_token"] = token_input
+    # Always sync to shared session state
+    st.session_state["gh_shared_repo"] = repo_input
+    st.session_state["gh_shared_token"] = token_input.strip() if token_input else ""
 
     token = token_input.strip() if token_input else None
 
-    # Rate Limit Status Badge
+    # ── Rate Limit Status ─────────────────────────────────────────────────
     rl_info = get_rate_limit_status(token)
-    rl_status_cls = "color:#3FB950;" if rl_info["remaining"] > 10 else "color:#E3B341;" if rl_info["remaining"] > 0 else "color:#F85149;"
-    auth_label = "🔑 Authenticated" if rl_info["is_authenticated"] else "🌐 Public"
-    reset_text = f" · Resets {rl_info['reset_time']}" if rl_info.get("reset_time") else ""
-    st.markdown(
-        f'<div style="font-size:11px; color:var(--cia-text-faint); margin-bottom:8px;">'
-        f'{auth_label} API Quota: <b style="{rl_status_cls}">{rl_info["remaining"]}/{rl_info["limit"]}</b> calls remaining{reset_text}'
-        f'</div>',
-        unsafe_allow_html=True
-    )
+    rl_remaining = rl_info["remaining"]
+    rl_limit = rl_info["limit"]
+    is_authed = rl_info["is_authenticated"]
+
+    if rl_remaining == 0 and not is_authed:
+        st.error(
+            "🚫 **GitHub public API rate limit exhausted (0/60).** "
+            "Enter a GitHub Personal Access Token in the field above to continue with 5,000 requests/hour."
+        )
+    elif rl_remaining == 0 and is_authed:
+        st.error("🚫 **Authenticated GitHub API rate limit exhausted.** Your token quota has been used up.")
+    else:
+        rl_color = "#15803D" if rl_remaining > 100 else "#92400E" if rl_remaining > 10 else "#B91C1C"
+        auth_icon = "🔑 Authenticated GitHub API" if is_authed else "🌐 Public GitHub API"
+        reset_text = f" · Resets {rl_info['reset_time']}" if rl_info.get("reset_time") else ""
+        st.markdown(
+            f'<div style="font-size:12px; color:var(--cia-text-muted); margin-bottom:8px; '
+            f'background:var(--cia-surface2); border:1px solid var(--cia-border); '
+            f'border-radius:6px; padding:6px 12px;">'
+            f'{auth_icon}: <b style="color:{rl_color}">{rl_remaining:,}/{rl_limit:,}</b> requests remaining{reset_text}'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
     if not repo_input or not repo_input.strip():
         st.info("Enter a GitHub repository URL or `owner/repo` to dynamically explore repository files.")
@@ -106,7 +120,7 @@ def render():
 
     # Repo info banner
     st.markdown(
-        f'<div style="background:rgba(9,105,218,0.06); border:1px solid rgba(9,105,218,0.25); '
+        f'<div style="background:var(--cia-surface); border:1px solid var(--cia-border); '
         f'border-radius:8px; padding:12px 16px; margin:10px 0; display:flex; align-items:center; justify-content:space-between;">'
         f'<span><b>📦 Repository:</b> '
         f'<a href="{html.escape(repo_info["html_url"])}" target="_blank" '
@@ -134,8 +148,8 @@ def render():
     with col_mode:
         st.markdown(
             '<div style="padding:8px 0;">'
-            '<span style="background:rgba(9,105,218,0.12); color:var(--cia-accent); '
-            'padding:6px 14px; border-radius:6px; font-weight:600; font-size:13px;">'
+            '<span style="background:var(--cia-info-bg); color:var(--cia-accent); '
+            'padding:6px 14px; border-radius:6px; font-weight:600; font-size:13px; border:1px solid var(--cia-border);">'
             '🔵 Mode: Predictive — Before Change</span></div>',
             unsafe_allow_html=True,
         )
@@ -182,37 +196,79 @@ def render():
         analyze_clicked = st.button("⚡ Analyze Potential Impact", key="btn_gh_pred_analyze")
 
     # ── Run Analysis ─────────────────────────────────────────────────────
+    cache_key = f"gh_pred_res_{owner}_{repo}_{selected_branch}_{selected_file}"
+    fcmap_key = f"gh_pred_fcmap_{owner}_{repo}_{selected_branch}"
+
     if analyze_clicked or st.session_state.get("gh_pred_last_file") == selected_file:
         st.session_state["gh_pred_last_file"] = selected_file
 
-        with st.spinner(f"Analyzing potential change impact for `{selected_file}`…"):
-            try:
-                target_content = get_file_content(owner, repo, selected_file, ref=selected_branch, token=token)
-            except GitHubAPIError as e:
-                st.error(f"❌ Could not fetch file: {e}")
-                return
+        cached_result = st.session_state.get(cache_key)
 
-            # Fetch content for related candidate files in the repository
-            file_contents_map = {selected_file: target_content}
-            scan_files = [f for f in file_tree if f["path"] != selected_file]
-            target_ext = "." + selected_file.rsplit(".", 1)[-1] if "." in selected_file else ""
-            same_lang = [f for f in scan_files if f["path"].endswith(target_ext)] if target_ext else scan_files
-            other_files = [f for f in scan_files if not f["path"].endswith(target_ext)] if target_ext else []
-            candidates = (same_lang[:40] + other_files[:10])
+        if cached_result and not analyze_clicked:
+            # Instant replay from session cache on re-renders / theme toggles
+            result = cached_result
+            st.caption("⚡ Results loaded from session cache (instant)")
+        else:
+            t0 = time.time()
+            progress_placeholder = st.empty()
 
-            for cf in candidates:
-                try:
-                    cf_content = get_file_content(owner, repo, cf["path"], ref=selected_branch, token=token)
-                    file_contents_map[cf["path"]] = cf_content
-                except Exception:
-                    continue
+            with progress_placeholder.container():
+                with st.spinner(f"Analyzing potential change impact for `{selected_file}`…"):
+                    # 1. Get or create repository-level file contents cache
+                    cached_fcmap = st.session_state.setdefault(fcmap_key, {})
 
-            result = analyze_github_predictive(
-                target_path=selected_file,
-                target_content=target_content,
-                repo_files=file_tree,
-                file_contents_map=file_contents_map,
-            )
+                    # 2. Fetch target file content if not cached
+                    if selected_file not in cached_fcmap:
+                        try:
+                            target_content = get_file_content(owner, repo, selected_file, ref=selected_branch, token=token)
+                            cached_fcmap[selected_file] = target_content
+                        except GitHubAPIError as e:
+                            st.error(f"❌ Could not fetch file `{selected_file}`: {e}")
+                            return
+                    else:
+                        target_content = cached_fcmap[selected_file]
+
+                    # 3. Identify candidate files to fetch (prioritize same language)
+                    scan_files = [f for f in file_tree if f["path"] != selected_file]
+                    target_ext = "." + selected_file.rsplit(".", 1)[-1].lower() if "." in selected_file else ""
+                    same_lang = [f for f in scan_files if f["path"].lower().endswith(target_ext)] if target_ext else scan_files
+                    other_files = [f for f in scan_files if not f["path"].lower().endswith(target_ext)] if target_ext else []
+                    candidate_files = (same_lang[:40] + other_files[:10])
+                    candidate_paths = [cf["path"] for cf in candidate_files]
+
+                    # 4. Parallel fetch for candidate files not yet in cache
+                    missing_paths = [p for p in candidate_paths if p not in cached_fcmap]
+                    t_net_start = time.time()
+                    if missing_paths:
+                        newly_fetched = _fetch_files_concurrent(
+                            owner=owner,
+                            repo=repo,
+                            paths=missing_paths,
+                            ref=selected_branch,
+                            token=token,
+                            max_workers=14,
+                            existing_map=cached_fcmap
+                        )
+                        cached_fcmap.update(newly_fetched)
+                    t_net = time.time() - t_net_start
+
+                    # 5. Local dependency and ML relationship analysis
+                    t_local_start = time.time()
+                    result = analyze_github_predictive(
+                        target_path=selected_file,
+                        target_content=target_content,
+                        repo_files=file_tree,
+                        file_contents_map=cached_fcmap,
+                    )
+                    t_local = time.time() - t_local_start
+                    total_elapsed = time.time() - t0
+
+                    # Save result and file map to session state
+                    st.session_state[cache_key] = result
+                    st.session_state[fcmap_key] = cached_fcmap
+
+            progress_placeholder.empty()
+            st.caption(f"✅ Analysis completed in **{total_elapsed:.1f}s** (Network: {t_net:.1f}s · Analysis: {t_local:.2f}s)")
 
         # ── Selected File Banner ─────────────────────────────────────────
         basename = selected_file.split("/")[-1]
@@ -220,18 +276,18 @@ def render():
         lang_icon = "☕" if "Java" in detected_lang else "🐍" if "Python" in detected_lang else "📜" if "Script" in detected_lang else "📄"
         viewer_url = (
             f"/viewer?type=github&repo={urllib.parse.quote(f'{owner}/{repo}')}"
-            f"&branch={urllib.parse.quote(selected_branch)}"
+            f"&ref={urllib.parse.quote(selected_branch)}"
             f"&file={urllib.parse.quote(selected_file)}"
         )
         st.markdown(
-            f'<div style="background:rgba(9,105,218,0.06); border:1px solid rgba(9,105,218,0.25); '
+            f'<div style="background:var(--cia-surface); border:1px solid var(--cia-border); '
             f'border-radius:8px; padding:12px 16px; margin:16px 0; display:flex; align-items:center; '
             f'justify-content:space-between;">'
             f'<span>{lang_icon} <b>Selected File:</b> '
             f'<code style="font-size:14px; font-weight:600; color:var(--cia-accent);">{html.escape(basename)}</code>'
             f' <span style="font-size:12px; color:var(--cia-text-faint);">({html.escape(detected_lang)} · {html.escape(selected_file)})</span></span>'
-            f'<a href="{viewer_url}" target="_blank" style="background:var(--cia-accent); color:#ffffff; '
-            f'padding:4px 14px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:600;">'
+            f'<a href="{viewer_url}" target="_blank" style="background:var(--cia-surface2); color:var(--cia-accent); '
+            f'border:1px solid var(--cia-border); padding:4px 14px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:600;">'
             f'Inspect Source ↗</a></div>',
             unsafe_allow_html=True,
         )
@@ -263,7 +319,7 @@ def render():
 
         # ── Academic Limitation Disclaimer ───────────────────────────────
         st.markdown(
-            '<div style="background:rgba(227,179,65,0.08); border:1px solid rgba(227,179,65,0.3); '
+            '<div style="background:var(--cia-info-bg); border:1px solid var(--cia-border); '
             'border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:12px; '
             'color:var(--cia-text-muted); line-height:1.6;">'
             'ℹ️ <b>Academic Note on External Repository Analysis:</b> '
@@ -388,7 +444,7 @@ def _render_github_artifact_card(item: dict, owner: str, repo: str, branch: str)
 
     viewer_url = (
         f"/viewer?type=github&repo={urllib.parse.quote(f'{owner}/{repo}')}"
-        f"&branch={urllib.parse.quote(branch)}"
+        f"&ref={urllib.parse.quote(branch)}"
         f"&file={urllib.parse.quote(item['path'])}"
     )
 

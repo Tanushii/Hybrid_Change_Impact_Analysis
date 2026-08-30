@@ -1,151 +1,450 @@
 """
 ui/styles.py
 Adaptive CSS & Component Renderers for the CIA Hybrid Dashboard.
-Works seamlessly in both Streamlit Dark and Light themes.
+Supports Light Mode (default) and Dark Mode via a single authoritative session-state theme toggle.
+Directly injects complete, unambiguous CSS rules for the active theme on every rerun.
 """
 import streamlit as st
 import html
+from typing import Dict, Any
 
-ADAPTIVE_CSS = """
+
+def get_theme() -> str:
+    """Return active theme: 'light' (default) or 'dark'."""
+    return st.session_state.get("theme", "light")
+
+
+def get_chart_colors() -> Dict[str, Any]:
+    """Return Plotly-ready color values for the active theme."""
+    theme = get_theme()
+    if theme == "light":
+        return {
+            "bg":          "rgba(0,0,0,0)",
+            "plot_bg":     "#FFFFFF",
+            "text":        "#1A202C",
+            "grid":        "#D1D9E6",
+            "axis":        "#3D4A5C",
+            "bar_main":    "#0058CC",
+            "bar_accent":  "#15803D",
+            "colorscale":  [[0.0, "#DBEAFE"], [0.5, "#3B82F6"], [1.0, "#0058CC"]],
+            "annot_color": "#1A202C",
+        }
+    else:
+        return {
+            "bg":          "rgba(0,0,0,0)",
+            "plot_bg":     "#161B22",
+            "text":        "#F0F6FC",
+            "grid":        "#30363D",
+            "axis":        "#B0BAC9",
+            "bar_main":    "#58A6FF",
+            "bar_accent":  "#56D364",
+            "colorscale":  [[0.0, "#0C2D6B"], [0.5, "#1F6FEB"], [1.0, "#58A6FF"]],
+            "annot_color": "#F0F6FC",
+        }
+
+
+def _build_theme_css(theme: str) -> str:
+    """Generate deterministic, complete CSS rules for the active theme."""
+    if theme == "dark":
+        tokens = """
+    --cia-bg:            #0D1117;
+    --cia-surface:       #161B22;
+    --cia-surface2:      #21262D;
+    --cia-card-bg:       #161B22;
+    --cia-border:        #30363D;
+    --cia-border-subtle: #21262D;
+    --cia-text:          #F0F6FC;
+    --cia-text-muted:    #C9D1D9;
+    --cia-text-faint:    #8B949E;
+    --cia-accent:        #58A6FF;
+    --cia-accent-soft:   #79C0FF;
+    --cia-high:          #FF7B72;
+    --cia-high-bg:       #3D1A1A;
+    --cia-high-border:   #F85149;
+    --cia-med:           #F0B429;
+    --cia-med-bg:        #2D2208;
+    --cia-med-border:    #E3B341;
+    --cia-low:           #56D364;
+    --cia-low-bg:        #0F2A1A;
+    --cia-low-border:    #3FB950;
+    --cia-info:          #58A6FF;
+    --cia-info-bg:       #0C2D6B;
+    --cia-shadow:        rgba(0,0,0,0.5);
+    --cia-code-bg:       #0D1117;
+    --cia-code-text:     #E6EDF3;
+    --cia-code-lineno:   #6E7681;
+    --cia-code-highlight:#3D1A1A;
+    --cia-code-search:   rgba(240,180,41,0.25);
+    --cia-code-method:   rgba(88,166,255,0.12);
+        """
+        app_bg = "#0D1117"
+        app_text = "#F0F6FC"
+        sidebar_bg = "#161B22"
+        sidebar_border = "#30363D"
+        input_bg = "#161B22"
+        input_border = "#30363D"
+        button_bg = "#21262D"
+        button_hover = "#30363D"
+        button_border = "#30363D"
+        tab_list_bg = "#21262D"
+        tab_active_color = "#58A6FF"
+        expander_bg = "#161B22"
+        toggle_btn_bg = "#58A6FF"
+        toggle_btn_text = "#0D1117"
+        toggle_btn_hover = "#79C0FF"
+        popover_bg = "#161B22"
+        popover_border = "#30363D"
+        popover_text = "#F0F6FC"
+        popover_hover_bg = "#21262D"
+        popover_hover_text = "#58A6FF"
+    else:  # light
+        tokens = """
+    --cia-bg:            #F4F6F9;
+    --cia-surface:       #FFFFFF;
+    --cia-surface2:      #E5E9F0;
+    --cia-card-bg:       #FFFFFF;
+    --cia-border:        #C8D1DC;
+    --cia-border-subtle: #DFE5EC;
+    --cia-text:          #1A202C;
+    --cia-text-muted:    #334155;
+    --cia-text-faint:    #475569;
+    --cia-accent:        #0058CC;
+    --cia-accent-soft:   #2563EB;
+    --cia-high:          #B91C1C;
+    --cia-high-bg:       #FEE2E2;
+    --cia-high-border:   #EF4444;
+    --cia-med:           #92400E;
+    --cia-med-bg:        #FEF3C7;
+    --cia-med-border:    #D97706;
+    --cia-low:           #15803D;
+    --cia-low-bg:        #DCFCE7;
+    --cia-low-border:    #22C55E;
+    --cia-info:          #0058CC;
+    --cia-info-bg:       #DBEAFE;
+    --cia-shadow:        rgba(15,23,42,0.08);
+    --cia-code-bg:       #F8FAFC;
+    --cia-code-text:     #0F172A;
+    --cia-code-lineno:   #64748B;
+    --cia-code-highlight:#FEE2E2;
+    --cia-code-search:   rgba(146,64,14,0.18);
+    --cia-code-method:   rgba(0,88,204,0.08);
+        """
+        app_bg = "#F4F6F9"
+        app_text = "#1A202C"
+        sidebar_bg = "#FFFFFF"
+        sidebar_border = "#C8D1DC"
+        input_bg = "#FFFFFF"
+        input_border = "#C8D1DC"
+        button_bg = "#FFFFFF"
+        button_hover = "#E5E9F0"
+        button_border = "#C8D1DC"
+        tab_list_bg = "#E5E9F0"
+        tab_active_color = "#0058CC"
+        expander_bg = "#FFFFFF"
+        toggle_btn_bg = "#1A202C"
+        toggle_btn_text = "#FFFFFF"
+        toggle_btn_hover = "#2D3748"
+        popover_bg = "#FFFFFF"
+        popover_border = "#C8D1DC"
+        popover_text = "#1A202C"
+        popover_hover_bg = "#E5E9F0"
+        popover_hover_text = "#0058CC"
+
+    return f"""
 <style>
 /* ── Google Fonts ─────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-html, body, [class*="css"] {
+html, body, [class*="css"] {{
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-}
+}}
 
-/* ── CSS Custom Properties — Light defaults ──────────────── */
-:root {
-    --cia-accent:        #0969DA;
-    --cia-accent-soft:   #54AEFF;
-    --cia-bg:            #F6F8FA;
-    --cia-surface:       #FFFFFF;
-    --cia-surface2:      #F0F2F5;
-    --cia-border:        #D0D7DE;
-    --cia-text:          #1F2328;
-    --cia-text-muted:    #424A53;
-    --cia-text-faint:    #656D76;
-    --cia-high:          #CF222E;
-    --cia-high-bg:       #FFEBE9;
-    --cia-high-border:   #FF8182;
-    --cia-med:           #9A6700;
-    --cia-med-bg:        #FFF8C5;
-    --cia-med-border:    #D4A72C;
-    --cia-low:           #1A7F37;
-    --cia-low-bg:        #DAFBE1;
-    --cia-low-border:    #4AC26B;
-    --cia-info:          #0969DA;
-    --cia-info-bg:       #DDF4FF;
-    --cia-shadow:        rgba(31,35,40,0.06);
-    --cia-card-bg:       #FFFFFF;
-}
+/* ── Active Theme Variables ──────────────────────────────── */
+:root {{
+{tokens}
+}}
 
-/* ── CSS Custom Properties — Dark ───────────────────────── */
-@media (prefers-color-scheme: dark) {
-    :root {
-        --cia-accent:        #58A6FF;
-        --cia-accent-soft:   #81D4FA;
-        --cia-bg:            #0D1117;
-        --cia-surface:       #161B22;
-        --cia-surface2:      #21262D;
-        --cia-border:        #30363D;
-        --cia-text:          #F0F6FC;
-        --cia-text-muted:    #C9D1D9;
-        --cia-text-faint:    #8B949E;
-        --cia-high:          #F85149;
-        --cia-high-bg:       #3D1A1A;
-        --cia-high-border:   #B62324;
-        --cia-med:           #E3B341;
-        --cia-med-bg:        #2D2208;
-        --cia-med-border:    #9E6A03;
-        --cia-low:           #3FB950;
-        --cia-low-bg:        #0F2A1A;
-        --cia-low-border:    #238636;
-        --cia-info:          #58A6FF;
-        --cia-info-bg:       #0C2D6B;
-        --cia-shadow:        rgba(0,0,0,0.4);
-        --cia-card-bg:       #161B22;
-    }
-}
+/* ── App Layout & Backgrounds ────────────────────────────── */
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+.main,
+.block-container {{
+    background-color: {app_bg} !important;
+    color: {app_text} !important;
+}}
 
-[data-theme="dark"] {
-    --cia-accent:        #58A6FF;
-    --cia-accent-soft:   #81D4FA;
-    --cia-bg:            #0D1117;
-    --cia-surface:       #161B22;
-    --cia-surface2:      #21262D;
-    --cia-border:        #30363D;
-    --cia-text:          #F0F6FC;
-    --cia-text-muted:    #C9D1D9;
-    --cia-text-faint:    #8B949E;
-    --cia-high:          #F85149;
-    --cia-high-bg:       #3D1A1A;
-    --cia-high-border:   #B62324;
-    --cia-med:           #E3B341;
-    --cia-med-bg:        #2D2208;
-    --cia-med-border:    #9E6A03;
-    --cia-low:           #3FB950;
-    --cia-low-bg:        #0F2A1A;
-    --cia-low-border:    #238636;
-    --cia-info:          #58A6FF;
-    --cia-info-bg:       #0C2D6B;
-    --cia-shadow:        rgba(0,0,0,0.4);
-    --cia-card-bg:       #161B22;
-}
+[data-testid="stHeader"] {{
+    background-color: {app_bg} !important;
+}}
 
-[data-theme="light"] {
-    --cia-accent:        #0969DA;
-    --cia-accent-soft:   #54AEFF;
-    --cia-bg:            #F6F8FA;
-    --cia-surface:       #FFFFFF;
-    --cia-surface2:      #F0F2F5;
-    --cia-border:        #D0D7DE;
-    --cia-text:          #1F2328;
-    --cia-text-muted:    #424A53;
-    --cia-text-faint:    #656D76;
-    --cia-high:          #CF222E;
-    --cia-high-bg:       #FFEBE9;
-    --cia-high-border:   #FF8182;
-    --cia-med:           #9A6700;
-    --cia-med-bg:        #FFF8C5;
-    --cia-med-border:    #D4A72C;
-    --cia-low:           #1A7F37;
-    --cia-low-bg:        #DAFBE1;
-    --cia-low-border:    #4AC26B;
-    --cia-info:          #0969DA;
-    --cia-info-bg:       #DDF4FF;
-    --cia-shadow:        rgba(31,35,40,0.06);
-    --cia-card-bg:       #FFFFFF;
-}
+/* ── Sidebar ─────────────────────────────────────────────── */
+[data-testid="stSidebar"],
+[data-testid="stSidebarContent"],
+section[data-testid="stSidebar"] {{
+    background-color: {sidebar_bg} !important;
+    border-right: 1px solid {sidebar_border} !important;
+    color: {app_text} !important;
+}}
 
-/* ── Global Streamlit Layout Resets ─────────────────────── */
-.stAppDeployButton { display: none !important; }
-footer { visibility: hidden !important; }
-[data-testid="stFooter"] { visibility: hidden !important; }
-[data-testid="stSidebarNav"] { display: none !important; }
+[data-testid="stSidebar"] *,
+[data-testid="stSidebarContent"] * {{
+    color: {app_text} !important;
+}}
 
-/* ── Header Title & Subtitle ────────────────────────────── */
-.cia-title {
-    font-size: 32px;
+[data-testid="stSidebar"] hr {{
+    border-color: {sidebar_border} !important;
+}}
+
+/* ── Native Inputs & Controls ────────────────────────────── */
+.stTextInput input,
+.stTextArea textarea,
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea {{
+    background-color: {input_bg} !important;
+    color: {app_text} !important;
+    border-color: {input_border} !important;
+}}
+
+.stTextInput > div > div,
+[data-baseweb="input"] > div,
+[data-baseweb="textarea"] > div {{
+    background-color: {input_bg} !important;
+    border-color: {input_border} !important;
+}}
+
+.stTextInput input::placeholder,
+.stTextArea textarea::placeholder {{
+    color: var(--cia-text-faint) !important;
+}}
+
+/* ── Selectbox Closed & Search Container ──────────────────── */
+.stSelectbox > div > div,
+[data-baseweb="select"] > div {{
+    background-color: {input_bg} !important;
+    color: {app_text} !important;
+    border-color: {input_border} !important;
+}}
+
+.stSelectbox [data-baseweb="select"] *,
+[data-baseweb="select"] input,
+[data-baseweb="select"] span,
+[data-baseweb="select"] div {{
+    color: {app_text} !important;
+}}
+
+/* ── Selectbox Open Popover & Options (High Contrast Fix) ── */
+div[data-baseweb="popover"],
+div[data-baseweb="popover"] > div,
+div[data-baseweb="popover"] ul,
+div[data-baseweb="menu"],
+ul[role="listbox"],
+[data-testid="stSelectboxVirtualDropdown"] {{
+    background-color: {popover_bg} !important;
+    color: {popover_text} !important;
+    border: 1px solid {popover_border} !important;
+    box-shadow: 0 4px 16px var(--cia-shadow) !important;
+}}
+
+div[data-baseweb="popover"] li,
+div[data-baseweb="popover"] [role="option"],
+div[data-baseweb="popover"] [data-baseweb="option"],
+div[data-baseweb="menu"] li,
+ul[role="listbox"] li,
+[data-testid="stSelectboxVirtualDropdown"] li {{
+    background-color: {popover_bg} !important;
+    color: {popover_text} !important;
+}}
+
+div[data-baseweb="popover"] li *,
+div[data-baseweb="popover"] [role="option"] *,
+div[data-baseweb="popover"] [data-baseweb="option"] *,
+div[data-baseweb="menu"] li *,
+ul[role="listbox"] li *,
+[data-testid="stSelectboxVirtualDropdown"] li * {{
+    color: {popover_text} !important;
+}}
+
+div[data-baseweb="popover"] li:hover,
+div[data-baseweb="popover"] [role="option"]:hover,
+div[data-baseweb="popover"] [data-baseweb="option"]:hover,
+div[data-baseweb="popover"] [aria-selected="true"],
+div[data-baseweb="menu"] li:hover,
+ul[role="listbox"] li:hover {{
+    background-color: {popover_hover_bg} !important;
+    color: {popover_hover_text} !important;
+}}
+
+div[data-baseweb="popover"] li:hover *,
+div[data-baseweb="popover"] [role="option"]:hover *,
+div[data-baseweb="popover"] [data-baseweb="option"]:hover *,
+div[data-baseweb="popover"] [aria-selected="true"] *,
+div[data-baseweb="menu"] li:hover *,
+ul[role="listbox"] li:hover * {{
+    color: {popover_hover_text} !important;
+}}
+
+/* Radio & Checkbox */
+.stRadio label,
+.stRadio > div,
+.stRadio p,
+.stRadio span,
+.stCheckbox label,
+.stCheckbox span,
+.stCheckbox p {{
+    color: {app_text} !important;
+}}
+
+/* Buttons */
+.stButton > button {{
+    background-color: {button_bg} !important;
+    color: {app_text} !important;
+    border: 1px solid {button_border} !important;
+}}
+
+.stButton > button:hover {{
+    background-color: {button_hover} !important;
+    border-color: var(--cia-accent) !important;
+    color: var(--cia-accent) !important;
+}}
+
+.stLinkButton > a {{
+    background-color: {button_bg} !important;
+    color: var(--cia-accent) !important;
+    border: 1px solid {button_border} !important;
+}}
+
+.stLinkButton > a:hover {{
+    background-color: {button_hover} !important;
+    border-color: var(--cia-accent) !important;
+}}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {{
+    background-color: {tab_list_bg} !important;
+    border-bottom: 1px solid var(--cia-border) !important;
+}}
+
+.stTabs [data-baseweb="tab"] {{
+    color: var(--cia-text-muted) !important;
+    background-color: transparent !important;
+}}
+
+.stTabs [aria-selected="true"] {{
+    color: {tab_active_color} !important;
+    border-bottom: 2px solid {tab_active_color} !important;
+    font-weight: 700 !important;
+}}
+
+.stTabs [data-baseweb="tab-panel"] {{
+    background-color: {app_bg} !important;
+}}
+
+/* Expanders */
+[data-testid="stExpander"] {{
+    border: 1px solid var(--cia-border) !important;
+    background-color: {expander_bg} !important;
+    border-radius: 8px !important;
+}}
+
+[data-testid="stExpander"] summary,
+details > summary {{
+    color: {app_text} !important;
+    background-color: {expander_bg} !important;
+}}
+
+[data-testid="stExpander"] > div > div {{
+    background-color: {expander_bg} !important;
+}}
+
+/* Bordered containers */
+[data-testid="stVerticalBlockBorderWrapper"] {{
+    background-color: var(--cia-surface) !important;
+    border-color: var(--cia-border) !important;
+}}
+
+/* Typography */
+.stMarkdown p,
+.stMarkdown li,
+.stMarkdown span,
+.stMarkdown div {{
+    color: {app_text} !important;
+}}
+
+h1, h2, h3, h4, h5, h6 {{
+    color: {app_text} !important;
+}}
+
+.stCaption, small {{
+    color: var(--cia-text-faint) !important;
+}}
+
+label, [data-testid="stWidgetLabel"] p {{
+    color: var(--cia-text-muted) !important;
+}}
+
+hr {{
+    border-color: var(--cia-border) !important;
+}}
+
+/* DataFrames */
+[data-testid="stDataFrameContainer"],
+.stDataFrame {{
+    background-color: var(--cia-surface) !important;
+}}
+
+/* ── Resets ───────────────────────────────────────────────── */
+.stAppDeployButton {{ display: none !important; }}
+footer {{ visibility: hidden !important; }}
+[data-testid="stFooter"] {{ visibility: hidden !important; }}
+[data-testid="stSidebarNav"] {{ display: none !important; }}
+
+/* ── Theme Toggle Button ──────────────────────────────────── */
+.cia-theme-btn-wrap {{
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-start;
+    padding-top: 6px;
+}}
+
+.cia-theme-btn-wrap .stButton > button {{
+    background-color: {toggle_btn_bg} !important;
+    color:            {toggle_btn_text} !important;
+    border:           1px solid {toggle_btn_bg} !important;
+    border-radius:    20px !important;
+    font-weight:      700 !important;
+    font-size:        13px !important;
+    padding:          6px 18px !important;
+    letter-spacing:   0.2px;
+    white-space:      nowrap;
+    box-shadow:       0 2px 5px var(--cia-shadow);
+}}
+
+.cia-theme-btn-wrap .stButton > button:hover {{
+    background-color: {toggle_btn_hover} !important;
+    border-color:     {toggle_btn_hover} !important;
+    color:            {toggle_btn_text} !important;
+}}
+
+/* ── Custom Cards & Badges ────────────────────────────────── */
+.cia-title {{
+    font-size: 30px;
     font-weight: 700;
     background: linear-gradient(135deg, var(--cia-accent) 0%, var(--cia-accent-soft) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    text-align: center;
     letter-spacing: -0.5px;
-    padding: 6px 0 2px;
-}
-.cia-subtitle {
-    font-size: 14px;
-    color: var(--cia-text-muted);
-    text-align: center;
-    margin-bottom: 22px;
-}
+    padding: 4px 0 2px;
+}}
 
-/* ── Metric Summary Cards ───────────────────────────────── */
-.metric-card {
+.cia-subtitle {{
+    font-size: 13px;
+    color: var(--cia-text-muted);
+    margin-bottom: 18px;
+}}
+
+.metric-card {{
     background: var(--cia-surface);
     border: 1px solid var(--cia-border);
     border-radius: 10px;
@@ -153,54 +452,57 @@ footer { visibility: hidden !important; }
     text-align: center;
     box-shadow: 0 2px 6px var(--cia-shadow);
     transition: border-color 0.2s, transform 0.2s;
-}
-.metric-card:hover {
+}}
+
+.metric-card:hover {{
     border-color: var(--cia-accent);
     transform: translateY(-2px);
-}
-.metric-value {
+}}
+
+.metric-value {{
     font-size: 26px;
     font-weight: 700;
     color: var(--cia-accent);
     line-height: 1.1;
-}
-.metric-label {
+}}
+
+.metric-label {{
     font-size: 11px;
     color: var(--cia-text-muted);
     margin-top: 5px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-}
+}}
 
-/* ── Risk Pills ─────────────────────────────────────────── */
-.pill-high {
+.pill-high {{
     background: var(--cia-high-bg);
     color: var(--cia-high);
     border: 1px solid var(--cia-high-border);
     border-radius: 16px; padding: 3px 12px;
     font-weight: 700; font-size: 12px;
     display: inline-flex; align-items: center; gap: 5px;
-}
-.pill-medium {
+}}
+
+.pill-medium {{
     background: var(--cia-med-bg);
     color: var(--cia-med);
     border: 1px solid var(--cia-med-border);
     border-radius: 16px; padding: 3px 12px;
     font-weight: 700; font-size: 12px;
     display: inline-flex; align-items: center; gap: 5px;
-}
-.pill-low {
+}}
+
+.pill-low {{
     background: var(--cia-low-bg);
     color: var(--cia-low);
     border: 1px solid var(--cia-low-border);
     border-radius: 16px; padding: 3px 12px;
     font-weight: 700; font-size: 12px;
     display: inline-flex; align-items: center; gap: 5px;
-}
+}}
 
-/* ── Evidence Badges ────────────────────────────────────── */
-.badge-verified {
+.badge-verified {{
     background: var(--cia-low-bg);
     color: var(--cia-low);
     border: 1px solid var(--cia-low-border);
@@ -211,8 +513,9 @@ footer { visibility: hidden !important; }
     display: inline-flex;
     align-items: center;
     gap: 4px;
-}
-.badge-unverified {
+}}
+
+.badge-unverified {{
     background: var(--cia-surface2);
     color: var(--cia-text-faint);
     border: 1px solid var(--cia-border);
@@ -223,10 +526,9 @@ footer { visibility: hidden !important; }
     display: inline-flex;
     align-items: center;
     gap: 4px;
-}
+}}
 
-/* ── Multi-Layer Artifact Impact Card ───────────────────── */
-.artifact-impact-card {
+.artifact-impact-card {{
     background: var(--cia-card-bg);
     border: 1px solid var(--cia-border);
     border-radius: 10px;
@@ -234,65 +536,47 @@ footer { visibility: hidden !important; }
     margin-bottom: 14px;
     box-shadow: 0 2px 6px var(--cia-shadow);
     transition: border-color 0.2s, box-shadow 0.2s;
-}
-.artifact-impact-card:hover {
+}}
+
+.artifact-impact-card:hover {{
     border-color: var(--cia-accent);
     box-shadow: 0 4px 12px var(--cia-shadow);
-}
-.artifact-card-header {
+}}
+
+.artifact-card-header {{
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 12px;
     padding-bottom: 10px;
     border-bottom: 1px solid var(--cia-border);
-}
-.artifact-name {
+}}
+
+.artifact-name {{
     font-family: 'JetBrains Mono', monospace;
     font-size: 16px;
     font-weight: 600;
     color: var(--cia-accent);
-}
-.artifact-meta-grid {
+}}
+
+.artifact-meta-grid {{
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 12px;
     margin-bottom: 10px;
-}
-.artifact-meta-item {
-    font-size: 13px;
-    color: var(--cia-text-muted);
-}
-.artifact-meta-label {
+}}
+
+.artifact-meta-item {{ font-size: 13px; color: var(--cia-text-muted); }}
+.artifact-meta-label {{
     font-size: 11px;
     text-transform: uppercase;
     color: var(--cia-text-faint);
     font-weight: 600;
     margin-bottom: 2px;
-}
-.artifact-meta-value {
-    font-weight: 600;
-    color: var(--cia-text);
-}
+}}
+.artifact-meta-value {{ font-weight: 600; color: var(--cia-text); }}
 
-/* Progress bar inside cards */
-.score-bar-bg {
-    background: var(--cia-surface2);
-    border-radius: 6px;
-    height: 8px;
-    width: 100%;
-    overflow: hidden;
-    margin-top: 4px;
-}
-.score-bar-fill {
-    height: 100%;
-    border-radius: 6px;
-    background: linear-gradient(90deg, var(--cia-accent) 0%, var(--cia-accent-soft) 100%);
-    transition: width 0.3s ease;
-}
-
-/* ── Section Headers ────────────────────────────────────── */
-.section-header {
+.section-header {{
     font-size: 16px;
     font-weight: 600;
     color: var(--cia-text);
@@ -300,20 +584,48 @@ footer { visibility: hidden !important; }
     display: flex;
     align-items: center;
     gap: 8px;
-}
+}}
 
-.cia-divider {
+.cia-divider {{
     border: none;
     border-top: 1px solid var(--cia-border);
     margin: 18px 0;
-}
+}}
 </style>
 """
 
 
 def inject_styles():
-    st.markdown(ADAPTIVE_CSS, unsafe_allow_html=True)
+    """Inject dynamic CSS tailored directly to the active session-state theme."""
+    theme = get_theme()
+    css = _build_theme_css(theme)
+    st.markdown(css, unsafe_allow_html=True)
 
+
+def inject_theme_script():
+    """No-op kept for backward compatibility."""
+    pass
+
+
+def render_theme_toggle():
+    """
+    Render the authoritative theme toggle button.
+    Light mode → shows '🌙 Dark Mode'  (dark button on light bg)
+    Dark  mode → shows '☀️ Light Mode' (vibrant button on dark bg)
+    """
+    theme = get_theme()
+    label = "🌙  Dark Mode" if theme == "light" else "☀️  Light Mode"
+
+    st.markdown('<div class="cia-theme-btn-wrap">', unsafe_allow_html=True)
+    clicked = st.button(label, key="__cia_theme_toggle__")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if clicked:
+        st.session_state["theme"] = "dark" if theme == "light" else "light"
+        st.rerun()
+
+
+# ── Component renderers ───────────────────────────────────────────────────────
 
 def metric_card(value, label):
     return (
@@ -344,8 +656,7 @@ def render_artifact_card_native(
     btn_label: str = "Inspect Source ↗",
 ):
     """
-    Renders a clean, high-visibility artifact impact card using native Streamlit containers and columns.
-    Completely eliminates Markdown indentation parsing bugs and prevents raw HTML leaking to UI.
+    Renders a clean, high-visibility artifact impact card using native Streamlit containers.
     """
     score_pct = ml_score * 100.0
     icon = "📄" if artifact_name.endswith((".java", ".txt", ".py", ".ts", ".js", ".go")) else "📁"
@@ -364,7 +675,6 @@ def render_artifact_card_native(
         with c_btn:
             st.link_button(btn_label, viewer_url, use_container_width=True)
 
-        # 4 Key Impact Metrics
         c_risk, c_ml, c_dep, c_trace = st.columns(4)
         with c_risk:
             st.caption("Overall Impact Risk")
@@ -399,18 +709,17 @@ def render_artifact_card(
     risk_rationale: str,
     viewer_url: str
 ) -> str:
-    """
-    Renders single-line, zero-indent HTML to prevent Markdown parser code-block quirks.
-    """
+    """Renders a single-line HTML artifact card."""
     score_pct = ml_score * 100.0
     safe_name = html.escape(artifact_name)
     safe_title = html.escape(title_label)
     safe_rationale = html.escape(risk_rationale)
-    
-    if is_verified:
-        trace_badge = '<span class="badge-verified">✓ Verified Traceability</span>'
-    else:
-        trace_badge = '<span class="badge-unverified">⚡ ML Predicted Candidate</span>'
+
+    trace_badge = (
+        '<span class="badge-verified">✓ Verified Traceability</span>'
+        if is_verified else
+        '<span class="badge-unverified">⚡ ML Predicted Candidate</span>'
+    )
 
     dep_tier = dependency_reach.upper()
     dep_icon = {"HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟢", "NONE": "⚪"}.get(dep_tier, "⚪")
@@ -433,4 +742,3 @@ def render_artifact_card(
         f'<div style="font-size:12px; color:var(--cia-text-faint); padding-top:6px; border-top:1px dashed var(--cia-border); margin-top:6px;"><b>Risk Rationale:</b> {safe_rationale}</div>'
         f'</div>'
     )
-

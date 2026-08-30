@@ -13,12 +13,52 @@ Responsibilities:
 
 import re
 import html
+import time
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Tuple, Optional, Any, Set
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 from services.ml_engine import load_ml_artifacts, MLArtifacts
-from services.github_service import compare_commits, get_file_content, parse_diff_hunks
+from services.github_service import compare_commits, get_file_content, parse_diff_hunks, get_file_tree
+
+logger = logging.getLogger(__name__)
+
+# ── Concurrent file-fetching helper ──────────────────────────────────────────
+
+def _fetch_files_concurrent(
+    owner: str,
+    repo: str,
+    paths: List[str],
+    ref: str,
+    token: Optional[str] = None,
+    max_workers: int = 12,
+    existing_map: Optional[Dict[str, str]] = None
+) -> Dict[str, str]:
+    """
+    Fetch multiple file contents from GitHub in parallel using a thread pool.
+    Skips paths already present in existing_map.
+    Returns a dict of {path: content}.
+    """
+    result: Dict[str, str] = {}
+    skip = set(existing_map.keys()) if existing_map else set()
+    to_fetch = [p for p in paths if p not in skip]
+
+    def _fetch_one(path: str):
+        try:
+            return path, get_file_content(owner, repo, path, ref=ref, token=token)
+        except Exception:
+            return path, None
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_fetch_one, p): p for p in to_fetch}
+        for future in as_completed(futures):
+            path, content = future.result()
+            if content is not None:
+                result[path] = content
+
+    return result
 
 
 # ── 1. Language Detection & Lightweight Structural Extractors ────────────────
@@ -278,22 +318,22 @@ def analyze_repository_dependencies(
 
             # 1. Other file references target class / module / file symbol (Incoming callers)
             if len(base_symbol) >= 3 and re.search(r'\b' + re.escape(base_symbol) + r'\b', fcontent):
-                caller_files.append(other_filename)
-                connected_files.append(other_filename)
+                caller_files.append(fpath)
+                connected_files.append(fpath)
                 continue
 
             # 2. Other file references target function / method names
             for m_name in list(method_names)[:10]:
                 if len(m_name) >= 3 and re.search(r'\b' + re.escape(m_name) + r'\s*\(', fcontent):
-                    caller_files.append(other_filename)
-                    connected_files.append(other_filename)
+                    caller_files.append(fpath)
+                    connected_files.append(fpath)
                     break
 
             # 3. Target references other file base symbol (Outgoing callees)
             other_base = other_filename.rsplit(".", 1)[0] if "." in other_filename else other_filename
             if len(other_base) >= 3 and re.search(r'\b' + re.escape(other_base) + r'\b', target_content):
-                callee_files.append(other_filename)
-                connected_files.append(other_filename)
+                callee_files.append(fpath)
+                connected_files.append(fpath)
 
     unique_connected = sorted(list(set(connected_files)))
     total_count = len(unique_connected)
@@ -418,7 +458,7 @@ def analyze_github_predictive(
 
             fname = fpath.split("/")[-1]
             score = compute_model_relationship_score(target_content, fcontent, artifacts)
-            is_struct_linked = fname in struct_info["connected_files"]
+            is_struct_linked = fpath in struct_info["connected_files"]
 
             effective_score = min(score + (0.20 if is_struct_linked else 0.0), 0.99)
             conf = "HIGH" if effective_score >= 0.70 else "MODERATE" if effective_score >= 0.40 else "LOW"
@@ -489,6 +529,57 @@ def analyze_github_post_change(
     modified_count = 0
     deleted_count = 0
 
+    t_start = time.perf_counter()
+
+    # ── Stage 1: Build file_contents_map if not pre-populated ────────────────
+    if file_contents_map is None:
+        file_contents_map = {}
+
+    if not file_contents_map:
+        try:
+            t0 = time.perf_counter()
+            repo_tree = get_file_tree(owner, repo, new_commit, token=token)
+            logger.debug("[Mode2] Tree fetch: %.2fs (%d files)", time.perf_counter() - t0, len(repo_tree))
+
+            # Build candidate set: for each changed file fetch same-language neighbours
+            # Prioritise same-extension files (same language = stronger dependency signal)
+            candidate_paths: List[str] = []
+            seen_candidates: set = set()
+            for f in files:
+                fname = f["filename"]
+                if f["status"] == "removed":
+                    continue
+                target_ext = "." + fname.rsplit(".", 1)[-1] if "." in fname else ""
+                for tf in repo_tree:
+                    p = tf["path"]
+                    if p == fname or p in seen_candidates:
+                        continue
+                    # Cap: 50 same-language + 5 other-language per changed file
+                    if target_ext and p.endswith(target_ext):
+                        candidate_paths.append(p)
+                        seen_candidates.add(p)
+                    elif len([c for c in candidate_paths if not c.endswith(target_ext)]) < 5:
+                        candidate_paths.append(p)
+                        seen_candidates.add(p)
+                    if len(candidate_paths) >= 55:
+                        break
+
+            t0 = time.perf_counter()
+            fetched = _fetch_files_concurrent(
+                owner, repo, candidate_paths, ref=new_commit, token=token,
+                max_workers=14, existing_map=file_contents_map
+            )
+            file_contents_map.update(fetched)
+            logger.debug(
+                "[Mode2] Concurrent file fetch: %.2fs (%d files, %d workers)",
+                time.perf_counter() - t0, len(fetched), 14
+            )
+        except Exception as exc:
+            logger.debug("[Mode2] Tree/fetch error: %s", exc)
+
+    logger.debug("[Mode2] file_contents_map size: %d", len(file_contents_map))
+
+    # ── Stage 2: Per-file analysis (no additional API calls) ─────────────────
     for f in files:
         fname = f["filename"]
         status = f["status"]
@@ -500,25 +591,28 @@ def analyze_github_post_change(
         else:
             modified_count += 1
 
-        # Fetch file content at new commit
-        content = ""
-        if status != "removed":
+        # Use already-fetched content; only fall back to an API call if missing
+        content = file_contents_map.get(fname, "")
+        if not content and status != "removed":
             try:
                 content = get_file_content(owner, repo, fname, ref=new_commit, token=token)
+                file_contents_map[fname] = content
             except Exception:
                 content = ""
 
-        # Extract changed methods / functions for any detected language
+        # Extract changed methods using already-fetched content
         changed_methods = []
         if content:
             changed_methods = extract_changed_methods_for_file(content, f.get("changed_lines", []), fname)
 
-        # Structural dependency reach
+        # Structural dependency reach — uses in-memory map (no new API calls)
         struct_info = analyze_repository_dependencies(fname, content, [], file_contents_map) if content else {
             "reach_tier": "LOW",
             "reach_badge": "🟢",
             "reach_count": 0,
             "connected_files": [],
+            "caller_files": [],
+            "callee_files": [],
             "language": detect_language(fname)
         }
 

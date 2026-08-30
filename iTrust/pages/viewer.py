@@ -43,7 +43,7 @@ from services.github_service import (
     GitHubAPIError
 )
 from services.github_impact_engine import extract_methods_for_file, detect_language
-from ui.styles import inject_styles, severity_pill
+from ui.styles import inject_styles, inject_theme_script, severity_pill
 
 # ── Page Config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -53,6 +53,7 @@ st.set_page_config(
 )
 
 inject_styles()
+inject_theme_script()  # apply dark/light theme from session state
 
 # ── Custom CSS for Viewer (Full Width, No Native Sidebar) ───────────────────
 st.markdown("""
@@ -187,7 +188,7 @@ div[data-testid="collapsedControl"] {
 
 /* Code container table */
 .code-container {
-    background: var(--cia-card-bg);
+    background: var(--cia-code-bg);
     border: 1px solid var(--cia-border);
     border-radius: 8px;
     overflow-x: auto;
@@ -202,13 +203,13 @@ div[data-testid="collapsedControl"] {
     border-collapse: collapse;
 }
 .code-table tr:hover td {
-    background: rgba(88,166,255,0.06);
+    background: var(--cia-code-method);
 }
 .line-num {
     width: 48px;
     text-align: right;
     padding: 0 10px;
-    color: var(--cia-text-faint);
+    color: var(--cia-code-lineno);
     user-select: none;
     border-right: 1px solid var(--cia-border);
     background: var(--cia-surface2);
@@ -219,25 +220,26 @@ div[data-testid="collapsedControl"] {
     padding-left: 12px;
     white-space: pre-wrap;
     word-break: break-all;
-    color: var(--cia-text);
+    color: var(--cia-code-text);
 }
 .line-highlight {
-    background: rgba(248,81,73,0.12) !important;
+    background: var(--cia-high-bg) !important;
     border-left: 4px solid var(--cia-high);
 }
 .line-highlight .line-num {
     color: var(--cia-high) !important;
     font-weight: 700;
-    background: rgba(248,81,73,0.18) !important;
+    background: var(--cia-high-bg) !important;
+    opacity: 0.9;
 }
 .line-highlight-active {
-    background: rgba(9,105,218,0.18) !important;
+    background: var(--cia-code-highlight) !important;
     border-left: 4px solid var(--cia-accent);
 }
 .line-highlight-active .line-num {
     color: var(--cia-accent) !important;
     font-weight: 700;
-    background: rgba(9,105,218,0.22) !important;
+    background: var(--cia-code-highlight) !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -249,7 +251,7 @@ if qp.get("file"):
     st.session_state["v_filename"] = qp.get("file", "")
     st.session_state["v_type"] = qp.get("type", "java")
     st.session_state["v_repo"] = qp.get("repo", "")
-    st.session_state["v_branch"] = qp.get("branch", "main")
+    st.session_state["v_branch"] = qp.get("ref", qp.get("branch", "main"))
     st.session_state["v_lines"] = qp.get("lines", "")
     st.session_state["v_req"] = qp.get("req", "")
     st.session_state["v_code"] = qp.get("code", "")

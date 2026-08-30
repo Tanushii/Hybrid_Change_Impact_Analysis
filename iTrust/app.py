@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 # ── Imports (after set_page_config) ─────────────────────────────────────────
-from ui.styles import inject_styles
+from ui.styles import inject_styles, inject_theme_script, render_theme_toggle
 from services.data_loader import (
     load_traceability_links,
     load_callgraph,
@@ -28,8 +28,13 @@ import ui.github_predictive as mode_gh_pred
 import ui.github_post_change as mode_gh_post
 import ui.results as mode_results
 
-# ── Global styles ────────────────────────────────────────────────────────────
+# ── Initialize theme — default: Light Mode ─────────────────────────────────
+if "theme" not in st.session_state:
+    st.session_state["theme"] = "light"
+
+# ── Global styles + activate theme ───────────────────────────────────
 inject_styles()
+inject_theme_script()   # sets data-theme on <html> to activate CSS tokens
 
 # ── Load data & ML artifacts (cached) ────────────────────────────────────────
 req_to_code, code_to_req = load_traceability_links()
@@ -39,17 +44,21 @@ all_req_texts = load_all_requirements()
 all_code_texts = load_all_code_texts()
 ml_artifacts = load_ml_artifacts()
 
-# ── Header ───────────────────────────────────────────────────────────────────
-st.markdown(
-    '<div class="cia-title">⚡ AI-Assisted Change Impact Analysis</div>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    '<div class="cia-subtitle">'
-    'Multi-Layer Traceability, Semantic Relationships &amp; Structural Dependency Propagation'
-    '</div>',
-    unsafe_allow_html=True,
-)
+# ── Header (title + toggle) ───────────────────────────────────────────
+_h_title, _h_gap, _h_toggle = st.columns([7, 1, 2])
+with _h_title:
+    st.markdown(
+        '<div class="cia-title">⚡ AI-Assisted Change Impact Analysis</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="cia-subtitle">'
+        'Multi-Layer Traceability, Semantic Relationships &amp; Structural Dependency Propagation'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+with _h_toggle:
+    render_theme_toggle()
 
 # ── Sidebar Navigation ───────────────────────────────────────────────────────
 with st.sidebar:

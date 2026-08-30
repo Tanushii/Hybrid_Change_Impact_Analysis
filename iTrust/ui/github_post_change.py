@@ -38,6 +38,7 @@ def render():
     col_repo, col_token = st.columns([3, 2])
     
     default_repo = st.session_state.get("gh_shared_repo", "")
+    # Always read from shared state to keep token consistent across modes
     default_token = st.session_state.get("gh_shared_token", "")
 
     with col_repo:
@@ -52,29 +53,41 @@ def render():
             "GitHub Token (Optional)",
             value=default_token,
             type="password",
-            placeholder="ghp_xxxx... (increases rate limit)",
+            placeholder="ghp_xxxx... (increases rate limit to 5,000/hr)",
             key="gh_post_token",
         )
 
-    # Preserve in shared session state
-    if repo_input != default_repo:
-        st.session_state["gh_shared_repo"] = repo_input
-    if token_input != default_token:
-        st.session_state["gh_shared_token"] = token_input
+    # Always sync to shared session state (not just on change)
+    st.session_state["gh_shared_repo"] = repo_input
+    st.session_state["gh_shared_token"] = token_input.strip() if token_input else ""
 
     token = token_input.strip() if token_input else None
 
-    # Rate Limit Status Badge
+    # ── Rate Limit Status ─────────────────────────────────────────────────
     rl_info = get_rate_limit_status(token)
-    rl_status_cls = "color:#3FB950;" if rl_info["remaining"] > 10 else "color:#E3B341;" if rl_info["remaining"] > 0 else "color:#F85149;"
-    auth_label = "🔑 Authenticated" if rl_info["is_authenticated"] else "🌐 Public"
-    reset_text = f" · Resets {rl_info['reset_time']}" if rl_info.get("reset_time") else ""
-    st.markdown(
-        f'<div style="font-size:11px; color:var(--cia-text-faint); margin-bottom:8px;">'
-        f'{auth_label} API Quota: <b style="{rl_status_cls}">{rl_info["remaining"]}/{rl_info["limit"]}</b> calls remaining{reset_text}'
-        f'</div>',
-        unsafe_allow_html=True
-    )
+    rl_remaining = rl_info["remaining"]
+    rl_limit = rl_info["limit"]
+    is_authed = rl_info["is_authenticated"]
+
+    if rl_remaining == 0 and not is_authed:
+        st.error(
+            "🚫 **GitHub public API rate limit exhausted (0/60).** "
+            "Enter a GitHub Personal Access Token in the field above to continue with 5,000 requests/hour."
+        )
+    elif rl_remaining == 0 and is_authed:
+        st.error("🚫 **Authenticated GitHub API rate limit exhausted.** Your token quota has been used up.")
+    else:
+        rl_color = "#3FB950" if rl_remaining > 100 else "#E3B341" if rl_remaining > 10 else "#F85149"
+        auth_icon = "🔑 Authenticated GitHub API" if is_authed else "🌐 Public GitHub API"
+        reset_text = f" · Resets {rl_info['reset_time']}" if rl_info.get("reset_time") else ""
+        st.markdown(
+            f'<div style="font-size:12px; color:var(--cia-text-faint); margin-bottom:8px; '
+            f'background:rgba(63,185,80,0.06); border:1px solid rgba(63,185,80,0.2); '
+            f'border-radius:6px; padding:6px 12px;">'
+            f'{auth_icon}: <b style="color:{rl_color}">{rl_remaining:,}/{rl_limit:,}</b> requests remaining{reset_text}'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
     if not repo_input or not repo_input.strip():
         st.info("Enter a GitHub repository URL or `owner/repo` to compare commits and analyze actual changes.")
@@ -127,61 +140,123 @@ def render():
             unsafe_allow_html=True,
         )
 
-    # ── Load Commits ─────────────────────────────────────────────────────
+    # ── Load Commits (with manual SHA fallback) ─────────────────────────
+    use_manual = False
+    commits = []
     try:
         with st.spinner("Loading recent commits…"):
             commits = get_recent_commits(owner, repo, selected_branch, token, limit=30)
     except GitHubAPIError as e:
-        st.error(f"❌ {str(e)}")
-        return
+        err_str = str(e)
+        if "403" in err_str or "rate limit" in err_str.lower():
+            st.warning(
+                "🚫 Rate limit hit while loading commits. "
+                "Enter commits manually below, or add a GitHub Token above and try again."
+            )
+        else:
+            st.warning(f"Could not load commit list: {err_str}. Enter SHAs manually below.")
+        use_manual = True
 
-    if len(commits) < 2:
+    if not use_manual and len(commits) < 2:
         st.warning("This branch needs at least 2 commits for comparison.")
-        return
+        use_manual = True
 
-    commit_labels = [
-        f"{c['short_sha']} — {c['message'][:60]} ({c['date']})" for c in commits
-    ]
+    # Allow toggling manual entry even when commits load fine
+    use_manual = st.checkbox(
+        "✏️ Enter commit SHAs manually (use for specific/older commits)",
+        value=use_manual,
+        key="gh_post_manual_sha"
+    )
 
-    col_base, col_new = st.columns(2)
-    with col_base:
-        base_idx = st.selectbox(
-            "Base Commit (older)",
-            range(len(commit_labels)),
-            index=min(1, len(commit_labels) - 1),
-            format_func=lambda i: commit_labels[i],
-            key="gh_post_base",
-        )
-    with col_new:
-        new_idx = st.selectbox(
-            "New Commit (newer)",
-            range(len(commit_labels)),
-            index=0,
-            format_func=lambda i: commit_labels[i],
-            key="gh_post_new",
-        )
+    if use_manual:
+        col_base_m, col_new_m = st.columns(2)
+        with col_base_m:
+            base_sha = st.text_input(
+                "Base Commit SHA (older)",
+                value=st.session_state.get("gh_post_manual_base", ""),
+                placeholder="e.g. 3cf9acf",
+                key="gh_post_manual_base"
+            ).strip()
+        with col_new_m:
+            new_sha = st.text_input(
+                "New Commit SHA (newer)",
+                value=st.session_state.get("gh_post_manual_new", ""),
+                placeholder="e.g. de12df0",
+                key="gh_post_manual_new"
+            ).strip()
+        if not base_sha or not new_sha:
+            st.info("🔑 Enter both commit SHAs above to compare. You can use short SHAs (first 7 chars).")
+            return
+    else:
+        commit_labels = [
+            f"{c['short_sha']} — {c['message'][:60]} ({c['date']})" for c in commits
+        ]
 
-    base_sha = commits[base_idx]["sha"]
-    new_sha = commits[new_idx]["sha"]
+        col_base, col_new = st.columns(2)
+        with col_base:
+            base_idx = st.selectbox(
+                "Base Commit (older)",
+                range(len(commit_labels)),
+                index=min(1, len(commit_labels) - 1),
+                format_func=lambda i: commit_labels[i],
+                key="gh_post_base",
+            )
+        with col_new:
+            new_idx = st.selectbox(
+                "New Commit (newer)",
+                range(len(commit_labels)),
+                index=0,
+                format_func=lambda i: commit_labels[i],
+                key="gh_post_new",
+            )
+
+        base_sha = commits[base_idx]["sha"]
+        new_sha = commits[new_idx]["sha"]
 
     if base_sha == new_sha:
         st.warning("Base and new commits must be different. Please select different commits.")
         return
 
+
     analyze_clicked = st.button("🔍 Analyze Change Impact", key="btn_gh_post_analyze")
+
+    # ── Cache key: invalidate when repo/commits change ───────────────────
+    cache_key = f"gh_post_result_{owner}_{repo}_{base_sha}_{new_sha}"
+    fcmap_key  = f"gh_post_fcmap_{owner}_{repo}_{new_sha}"
 
     # ── Run Analysis ─────────────────────────────────────────────────────
     if analyze_clicked or st.session_state.get("gh_post_last_comparison") == f"{base_sha}_{new_sha}":
         st.session_state["gh_post_last_comparison"] = f"{base_sha}_{new_sha}"
 
-        with st.spinner("Comparing commits and analyzing change impact…"):
-            try:
-                result = analyze_github_post_change(
-                    owner, repo, base_sha, new_sha, token
-                )
-            except GitHubAPIError as e:
-                st.error(f"❌ Comparison failed: {str(e)}")
-                return
+        # Return cached result instantly on second run
+        if cache_key in st.session_state and not analyze_clicked:
+            result = st.session_state[cache_key]
+        else:
+            import time as _t
+            t_wall = _t.time()
+
+            # Reuse cached file_contents_map from previous analysis of same new_commit
+            cached_fcmap = st.session_state.get(fcmap_key, {})
+            spinner_msg = (
+                "⚡ Analyzing (using cached repository data)…"
+                if cached_fcmap else
+                "🔍 Fetching repository data and analyzing change impact…\n(first run — this may take ~15–30s depending on network)"
+            )
+
+            with st.spinner(spinner_msg):
+                try:
+                    result = analyze_github_post_change(
+                        owner, repo, base_sha, new_sha, token,
+                        file_contents_map=cached_fcmap if cached_fcmap else None
+                    )
+                    elapsed = _t.time() - t_wall
+                    # Cache the result and file map for future reruns
+                    st.session_state[cache_key] = result
+                    st.session_state[fcmap_key] = cached_fcmap  # engine mutates in-place
+                    st.caption(f"✅ Analysis completed in {elapsed:.1f}s")
+                except GitHubAPIError as e:
+                    st.error(f"❌ Comparison failed: {str(e)}")
+                    return
 
         if result["status"] == "identical":
             st.info("The selected commits are identical — no changes detected.")
@@ -270,7 +345,7 @@ def _render_changed_file_card(fr: dict, owner: str, repo: str, branch: str, comm
 
     viewer_url = (
         f"/viewer?type=github&repo={urllib.parse.quote(f'{owner}/{repo}')}"
-        f"&branch={urllib.parse.quote(commit_sha)}"
+        f"&ref={urllib.parse.quote(commit_sha)}"
         f"&file={urllib.parse.quote(fr['filename'])}"
     )
     if fr.get("changed_lines"):
@@ -326,4 +401,59 @@ def _render_changed_file_card(fr: dict, owner: str, repo: str, branch: str, comm
 
         if fr.get("risk_rationale"):
             st.caption(f"**Rationale:** {fr['risk_rationale']}")
+
+        st.markdown('<hr class="cia-divider" style="margin: 12px 0;">', unsafe_allow_html=True)
+
+        connected = fr.get("connected_files", [])
+        total_connected = len(connected)
+        caller_set = set(fr.get("caller_files", []))
+        callee_set  = set(fr.get("callee_files", []))
+
+        if not connected:
+            st.markdown('<b style="font-size:13px; color:var(--cia-text); text-transform:uppercase;">Potentially Impacted Artifacts</b>', unsafe_allow_html=True)
+            st.markdown('<span style="font-size:13px; color:var(--cia-text-faint);">No repository dependency relationships were detected for this changed method.</span>', unsafe_allow_html=True)
+            st.caption("Note: The structural analyzer evaluates direct and secondary code references within the repository tree.")
+        else:
+            st.markdown(
+                f'<b style="font-size:13px; color:var(--cia-text); text-transform:uppercase;">'
+                f'Potentially Impacted Artifacts</b> '
+                f'<span style="font-size:12px; color:var(--cia-text-faint);">({total_connected} detected)</span>',
+                unsafe_allow_html=True
+            )
+
+            INITIAL_SHOW = 8  # Show top 8 inline, rest in expander
+
+            def _render_artifact_row(c_file: str, idx: int):
+                rel_type = "Caller / Dependency" if c_file in caller_set else (
+                    "Callee / Reference" if c_file in callee_set else "Related"
+                )
+                c_url = (
+                    f"/viewer?type=github&repo={urllib.parse.quote(f'{owner}/{repo}')}"
+                    f"&ref={urllib.parse.quote(commit_sha)}&file={urllib.parse.quote(c_file)}"
+                )
+                c_basename = c_file.split("/")[-1]
+                with st.container(border=True):
+                    c1, c2 = st.columns([4, 1])
+                    with c1:
+                        st.markdown(
+                            f'<div style="display:flex; flex-direction:column; gap:3px;">'
+                            f'<div style="font-family:JetBrains Mono, monospace; font-size:14px; font-weight:700; color:var(--cia-accent);">{html.escape(c_basename)}</div>'
+                            f'<div style="font-size:10px; color:var(--cia-text-faint); font-family:monospace;">{html.escape(c_file)}</div>'
+                            f'<div><span style="background:rgba(227,179,65,0.1); color:#E3B341; padding:2px 6px; border-radius:4px; font-weight:600; font-size:10px;">{rel_type}</span></div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                    with c2:
+                        st.link_button("Inspect Source ↗", c_url, use_container_width=True)
+
+            # Render first N inline
+            for i, c_file in enumerate(connected[:INITIAL_SHOW]):
+                _render_artifact_row(c_file, i)
+
+            # Render remaining in collapsible expander
+            if total_connected > INITIAL_SHOW:
+                remaining = connected[INITIAL_SHOW:]
+                with st.expander(f"Show {len(remaining)} more impacted artifacts…", expanded=False):
+                    for i, c_file in enumerate(remaining):
+                        _render_artifact_row(c_file, INITIAL_SHOW + i)
 
